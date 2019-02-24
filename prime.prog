@@ -1,0 +1,35 @@
+letrec range(start) =
+  proc (stop)
+    if
+      =(start,stop)
+    then
+      emptylist
+    else
+      let step =
+        if <(start,stop)
+          then
+            1
+          else
+            -1
+      in
+        cons(start, ((range +(start, step)) stop))
+  in
+    
+letrec filter(p) =
+  proc (l)
+    if null?(l)
+    then emptylist
+    else if (p car(l)) then
+      cons(car(l), ((filter p) cdr(l)))
+      else ((filter p) cdr(l))
+  in
+let mod =
+  proc(x)
+    proc(y)
+      let q = /(x,y) in
+        let a = *(y, q) in
+          -(x, a)
+  in
+let divisibleq = proc(y) proc(x) if zero?(((mod x) y)) then true else false 
+  in
+    ((filter (divisibleq 2)) ((range 1) 100))

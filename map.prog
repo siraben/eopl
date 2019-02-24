@@ -1,0 +1,5 @@
+let square = proc (x) *(x,x) in
+letrec map(f) = proc(l) if null?(l)
+                        then emptylist
+                        else cons((f car(l)), ((map f) cdr(l))) in
+   ((map square) cons(1, cons(2, cons(3, emptylist))))
