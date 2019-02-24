@@ -1,3 +1,4 @@
+[ Generate a range of numbers ]
 letrec range(start) =
   proc (stop)
     if
@@ -14,7 +15,8 @@ letrec range(start) =
       in
         cons(start, ((range +(start, step)) stop))
   in
-    
+
+[ Higher order function filter ]    
 letrec filter(p) =
   proc (l)
     if null?(l)
@@ -23,6 +25,8 @@ letrec filter(p) =
       cons(car(l), ((filter p) cdr(l)))
       else ((filter p) cdr(l))
   in
+
+[ Modular arithmetic ]
 let mod =
   proc(x)
     proc(y)
@@ -30,6 +34,26 @@ let mod =
         let a = *(y, q) in
           -(x, a)
   in
-let divisibleq = proc(y) proc(x) if zero?(((mod x) y)) then true else false 
+
+
+[ Is n divisible by b? ]
+let dividesq = proc(n) proc(d) zero?(((mod n) d))
   in
-    ((filter (divisibleq 2)) ((range 1) 100))
+
+[ Prime loop ]
+
+let primeq = proc(n)
+  if =(n, 1)
+    then false
+  else
+    letrec primeloop(d) =
+      if <(n, *(d,d))
+      then true
+      else if ((dividesq n) d)
+           then false
+           else (primeloop +(d, 1))
+     in
+    (primeloop 2)
+    in
+
+((filter primeq) ((range 1) 1000))

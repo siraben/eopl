@@ -1,8 +1,7 @@
 
 open Int
-type Sym = string
 
-type Var = Sym
+type Var = string
 
 datatype Val =
          Nil
@@ -10,7 +9,7 @@ datatype Val =
          | Num of int
          | Bool of bool
          | String of string
-         | Symbol of Sym
+         | Symbol of string
          | Procedure of Var * Expr * Env
 
 and Env = EmptyEnv
@@ -566,9 +565,16 @@ and ParseCall _ =
                    (>>= (symb ")")
                     (fn _ => (return (Call (e1, e2)))))))))))
 
+and ParseComment _ =
+   (>>= (symb "[")
+      (fn _ =>
+         (>>= (many (sat (fn x => (not (x = #"]")))))
+              (fn _ => (>>= (symb "]") (fn _ => (ParseExpr ())))))))
+
 and ParseExpr _ = (ParseIf ())
               +++ (ParseConst ())
               +++ (ParseBoolean ())              
+              +++ (ParseComment ())              
               +++ (ParseCons ())
               +++ (ParseCar ())
               +++ (ParseCdr ())
@@ -619,11 +625,11 @@ fun cell_to_string c =
     | _ => raise TypeError
 
 and val_to_string(v) = case v of
-                   Bool a     => Bool.toString a
-                 | Num a      => Int.toString a
-                 | Nil        => "()"
-                 | Cell (a,b) => cell_to_string (Cell (a,b))
-                 | Procedure _  => "#<procedure>"
-                 | _          => "#<value>"
+                   Bool a      => Bool.toString a
+                 | Num a       => Int.toString a
+                 | Nil         => "()"
+                 | Cell (a,b)  => cell_to_string (Cell (a,b))
+                 | Procedure (name, _, _) => "#<procedure " ^ name ^">"
+                 | _           => "#<value>"
 (* Read evaluate print a file*)
 fun repf(filename) = print ("Result of evaluation: " ^ (val_to_string o run o readfile) filename ^ "\n")

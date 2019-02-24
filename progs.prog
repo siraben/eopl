@@ -1,7 +1,19 @@
+[ Factorial but only using the non-exercise operators from the book
+  Essentials of Programming Languages. ]
+
 let negate     = proc(x) -(0,x) in
 let dec        = proc(x) -(x,1) in
 let add        = proc (x) proc (y) -(x, (negate y)) in
-letrec mult(x) = proc(y) if zero?(x) then 0 else ((add y) ((mult (dec x)) y)) in
-letrec fact(x) = if zero?(x) then 1 else ((mult x) (fact (dec x))) in
-(fact 5)
+letrec mult(x) =
+  proc(y)
+    if
+      zero?(x)
+    then
+      0
+    else
+      ((add y) ((mult (dec x)) y)) in
+letrec fact(x) =
+  if zero?(x) then 1
+  else ((mult x) (fact (dec x))) in
+    (fact 5)
 
