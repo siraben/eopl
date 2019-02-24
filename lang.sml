@@ -1,4 +1,4 @@
-
+Control.Print.printDepth := 100;
 open Int
 
 type Var = string
@@ -32,7 +32,7 @@ and Expr = Const of int
          | Greaterp of Expr * Expr
          | Lessp of Expr * Expr
          | If of Expr * Expr * Expr
-         | Var of Sym
+         | Var of string
          | Let of Var * Expr * Expr
          | Letrec of Var * Var * Expr * Expr
          | Proc of Var * Expr
@@ -43,7 +43,7 @@ exception UnboundVariable
 
 fun lookup (var : Var) (env : Env) =
     case env of
-        EmptyEnv => raise UnboundVariable
+        EmptyEnv => (print("Unbound variable: \"" ^ var ^ "\""); raise UnboundVariable)
       | ExtendEnv (a, b, restenv) =>
         if var = a
         then b
@@ -633,3 +633,5 @@ and val_to_string(v) = case v of
                  | _           => "#<value>"
 (* Read evaluate print a file*)
 fun repf(filename) = print ("Result of evaluation: " ^ (val_to_string o run o readfile) filename ^ "\n")
+
+fun parse_tree filename = (read o readfile) filename

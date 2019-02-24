@@ -1,0 +1,10 @@
+[ Since we can pass closures around, that allows us to have
+  some form of continuations. ]
+
+letrec factorial(n) = proc(return)
+  if zero?(n)
+  then (return 1)
+  else ((factorial -(n,1)) proc (rest) (return *(n, rest)))
+  in
+((factorial 5) proc (x) x)
+
