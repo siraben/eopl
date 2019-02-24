@@ -52,8 +52,8 @@ let primeq = proc(n)
       else if ((dividesq n) d)
            then false
            else (primeloop +(d, 1))
-     in
+      in
     (primeloop 2)
     in
 
-((filter primeq) ((range 1) 1000))
+((filter primeq) ((range 1) 100))
