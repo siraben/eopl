@@ -304,6 +304,14 @@ val nat =
 
 val natural = (token nat)
 
+fun is_cons (Cons _) = true
+  | is_cons _        = false
+
+fun is_cell (Cell _) = true
+  | is_cell _        = false
+
+fun to_cons_list [] = Emptylist
+  | to_cons_list (x::xs) = Cons (x,to_cons_list xs)
 
 val try_read =
 let fun ParseConst _ = (>>= natural (fn n => return (Const n)))
@@ -571,11 +579,23 @@ and ParseComment _ =
          (>>= (many (sat (fn x => (not (x = #"]")))))
               (fn _ => (>>= (symb "]") (fn _ => (ParseExpr ())))))))
 
+and ParseList _ =
+    (>>= (symb "{")
+     (fn _ =>
+       (>>= (ParseExpr ())
+            (fn n =>
+              (>>= (manyn (>>= (symb ",") (fn _ => (ParseExpr ()))))
+                   (fn ns =>
+                     (>>= (symb "}")
+                          (fn _ => (return (to_cons_list (cons n ns)))))))))))
+        
+
 and ParseExpr _ = (ParseIf ())
               +++ (ParseConst ())
               +++ (ParseBoolean ())              
               +++ (ParseComment ())              
               +++ (ParseCons ())
+              +++ (ParseList ())              
               +++ (ParseCar ())
               +++ (ParseCdr ())
               +++ (ParseNullp ())
@@ -620,15 +640,19 @@ fun runfile(filename) = (run o readfile) filename
 
 fun cell_to_string c =
     case c of
-      Nil => "()"
-    | Cell (a, b) => "(" ^ val_to_string(a) ^ " . " ^ val_to_string(b) ^ ")"
+      Nil => ""
+    | Cell (a, b) => val_to_string(a) ^ ( case b of
+                       Cell c =>  " " ^ cell_to_string(Cell c)
+                    |  Nil => ""
+                    |  c => " . " ^ val_to_string(c) )
     | _ => raise TypeError
+
 
 and val_to_string(v) = case v of
                    Bool a      => Bool.toString a
                  | Num a       => Int.toString a
                  | Nil         => "()"
-                 | Cell (a,b)  => cell_to_string (Cell (a,b))
+                 | Cell a  => "(" ^ (cell_to_string (Cell a)) ^ ")"
                  | Procedure (name, _, _) => "#<procedure " ^ name ^">"
                  | _           => "#<value>"
 (* Read evaluate print a file*)
