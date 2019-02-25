@@ -10,6 +10,7 @@ datatype Val =
          | Bool of bool
          | String of string
          | Symbol of string
+         | Ref of int
          | Procedure of Var * Expr * Env
 
 and Env = EmptyEnv
@@ -19,13 +20,15 @@ and Env = EmptyEnv
 and Expr = Const of int
          | ConstBool of bool
          | Emptylist
+         | BeginEnd
          | Sub of Expr * Expr
          | Add of Expr * Expr
          | Mult of Expr * Expr
-         | Div of Expr * Expr              
+         | Div of Expr * Expr
          | Zerop of Expr
          | Nullp of Expr
          | Cons of Expr * Expr
+         | Begin of Expr * Expr
          | Car of Expr
          | Cdr of Expr
          | Equalp of Expr * Expr
@@ -37,9 +40,13 @@ and Expr = Const of int
          | Letrec of Var * Var * Expr * Expr
          | Proc of Var * Expr
          | Call of Expr * Expr
-   
+         | Newref of Expr
+         | Deref of Expr
+         | Setref of Expr * Expr
+
 
 exception UnboundVariable
+exception UnimplementedOperation
 
 fun lookup (var : Var) (env : Env) =
     case env of
@@ -57,6 +64,7 @@ fun lookup (var : Var) (env : Env) =
 exception ToBoolExtractFailed
 exception ToNumExtractFailed
 exception ToProcExtractFailed
+exception ToRefExtractFailed
 
 fun val_to_num (e : Val) =
     case e of
@@ -68,10 +76,38 @@ fun val_to_bool (e : Val) =
       Bool b => b
     | _ => raise ToBoolExtractFailed
 
+fun val_to_ref (e : Val) =
+    case e of
+      Ref b => b
+    | _ => raise ToRefExtractFailed
+
+
+fun empty_store _ = ref [Num ~1]
+
+val the_store = (empty_store ())
+
+fun initialize_store _ = (the_store := [Num ~1])
+
+
+fun newref (v : Val) = let
+                           val nr = List.length (!the_store)
+                       in
+                           the_store := (!the_store) @ [v];
+                           nr
+                       end
+
+fun deref r = List.nth ((!the_store),r)
+
+exception InvalidReference
+
+fun setref r (v : Val) = (the_store := List.update (!the_store,r,v))
+                         handle Subscript => raise InvalidReference
+
 
 fun apply_proc (p : Val -> Val) (v : Val) = (p v)
 
 exception TypeError
+exception NoMatchingBegin
 
 fun eval (e : Expr) (p : Env) =
     let
@@ -88,6 +124,11 @@ fun eval (e : Expr) (p : Env) =
     (* Cons should evaluate its arguments! *)
     | Cons (exp1, exp2) =>
       Cell ((eval exp1 p), (eval exp2 p))
+    | Begin (exp1, exp2) =>
+      if exp2 = BeginEnd
+      then (eval exp1 p)
+      else ((eval exp1 p); (eval exp2 p))
+    | BeginEnd => raise NoMatchingBegin
     | Car exp => let val res = (eval exp p) in
                  case res of
                    Cell (a,_) => a
@@ -104,25 +145,23 @@ fun eval (e : Expr) (p : Env) =
                  | _ =>    Bool false
                  end
 
-    | Sub (exp1, exp2) => Num (val_to_num (eval exp1 p)
-                            -
-                            val_to_num (eval exp2 p))
+    | Sub (exp1, exp2) => Num (val_to_num (eval exp1 p) -
+                               val_to_num (eval exp2 p))
 
-    | Add (exp1, exp2) => Num (val_to_num (eval exp1 p)
-                            +
-                            val_to_num (eval exp2 p))
+    | Add (exp1, exp2) => Num (val_to_num (eval exp1 p) +
+                               val_to_num (eval exp2 p))
 
-    | Mult (exp1, exp2) => Num (val_to_num (eval exp1 p)
-                            *
-                            val_to_num (eval exp2 p))
+    | Mult (exp1, exp2) => Num (val_to_num (eval exp1 p) *
+                                val_to_num (eval exp2 p))
 
-    | Div (exp1, exp2) => Num ((val_to_num (eval exp1 p)) div
-                            val_to_num (eval exp2 p))
+    | Div (exp1, exp2) => Num (val_to_num (eval exp1 p) div
+                               val_to_num (eval exp2 p))
+
     | Zerop e => Bool ((val_to_num (eval e p)) = 0)
     | Equalp (exp1, exp2) => Bool ((val_to_num (eval exp1 p)) = (val_to_num (eval exp2 p)))
     | Greaterp (exp1, exp2) => Bool ((val_to_num (eval exp1 p)) >  (val_to_num (eval exp2 p)))
     | Lessp (exp1, exp2) => Bool ((val_to_num (eval exp1 p)) < (val_to_num (eval exp2 p)))
-                 
+
     | If (pred, conseq, alt) => if (val_to_bool (eval pred p))
                                 then (eval conseq p)
                                 else (eval alt p)
@@ -130,8 +169,28 @@ fun eval (e : Expr) (p : Env) =
       eval body (ExtendEnv (var, (eval exp1 p), p))
     | Letrec (pname, bvar, pbody, lrbody) =>
       eval lrbody (ExtendEnvRec (pname, bvar, pbody, p))
-      
+
     | Proc (var, body) => Procedure (var, body, p)
+    | Newref exp1  =>  let
+                          val v1 = eval exp1 p
+                       in
+                          Ref (newref v1)
+                       end
+    | Deref exp1  =>  let
+                          val v1 = eval exp1 p
+                          val ref1 = val_to_ref v1
+                       in
+                          deref ref1
+                      end
+    | Setref (exp1, exp2)  =>
+                      let
+                          val ref1 = val_to_ref (eval exp1 p)
+                          val val2 = eval exp2 p
+                      in
+                          setref ref1 val2;
+                          Num 23
+                      end
+
     | Call (rator, rand) =>
 
       let
@@ -142,7 +201,7 @@ fun eval (e : Expr) (p : Env) =
       end
       end
 
-        
+
 
 open Char
 
@@ -313,6 +372,9 @@ fun is_cell (Cell _) = true
 fun to_cons_list [] = Emptylist
   | to_cons_list (x::xs) = Cons (x,to_cons_list xs)
 
+fun to_begin_list []      = BeginEnd
+  | to_begin_list (x::xs) = Begin (x,to_begin_list xs)
+
 val try_read =
 let fun ParseConst _ = (>>= natural (fn n => return (Const n)))
 and ParseTrue _ = (>>= (symb "true") (fn _ => (return (ConstBool true))))
@@ -333,8 +395,9 @@ and ParseIf _ =
                            (fn alt =>
                              (return (If (pred,conseq,alt)))))))))))))))
 
-and ParseZerop _ =
-    (>>= (symb "zero?")
+
+and make_op keyword constructor =
+(>>= (symb keyword)
       (fn _ =>
         (>>= (symb "("))
         (fn _ =>
@@ -342,45 +405,17 @@ and ParseZerop _ =
          (fn exp1 =>
           (>>= (symb ")")
            (fn _ =>
-              (return (Zerop exp1)))))))))
+              (return (constructor exp1)))))))))
 
-and ParseNullp _ =
-    (>>= (symb "null?")
-      (fn _ =>
-        (>>= (symb "("))
-        (fn _ =>
-         (>>= (ParseExpr ())
-         (fn exp1 =>
-          (>>= (symb ")")
-           (fn _ =>
-              (return (Nullp exp1)))))))))
+and ParseZerop  _ = make_op "zero?" Zerop
+and ParseNullp  _ = make_op "null?" Nullp
+and ParseCar    _ = make_op "car" Car
+and ParseCdr    _ = make_op "cdr" Cdr
+and ParseNewref _ = make_op "newref" Newref
+and ParseDeref  _ = make_op "deref" Deref
 
-
-and ParseCar _ =
-    (>>= (symb "car")
-      (fn _ =>
-        (>>= (symb "("))
-        (fn _ =>
-         (>>= (ParseExpr ())
-         (fn exp1 =>
-          (>>= (symb ")")
-           (fn _ =>
-              (return (Car exp1)))))))))
-
-
-and ParseCdr _ =
-    (>>= (symb "cdr")
-      (fn _ =>
-        (>>= (symb "("))
-        (fn _ =>
-         (>>= (ParseExpr ())
-         (fn exp1 =>
-          (>>= (symb ")")
-           (fn _ =>
-              (return (Cdr exp1)))))))))
-
-and ParseSub _ =
-  (>>= (symb "-")
+and make_binop keyword constructor =
+  (>>= (symb keyword)
     (fn _ =>
        (>>= (symb "("))
        (fn _ =>
@@ -392,114 +427,17 @@ and ParseSub _ =
                     (fn exp2 =>
                       (>>= (symb ")")
                         (fn _ =>
-                          (return (Sub (exp1,exp2))))))))))))))
+                          (return (constructor (exp1,exp2))))))))))))))
 
-and ParseMult _ =
-  (>>= (symb "*")
-    (fn _ =>
-       (>>= (symb "("))
-       (fn _ =>
-         (>>= (ParseExpr ())
-            (fn exp1 =>
-               (>>= (symb ",")
-                  (fn _ =>
-                    (>>= (ParseExpr ())
-                    (fn exp2 =>
-                      (>>= (symb ")")
-                        (fn _ =>
-                          (return (Mult (exp1,exp2))))))))))))))
-
-and ParseAdd _ =
-  (>>= (symb "+")
-    (fn _ =>
-       (>>= (symb "("))
-       (fn _ =>
-         (>>= (ParseExpr ())
-            (fn exp1 =>
-               (>>= (symb ",")
-                  (fn _ =>
-                    (>>= (ParseExpr ())
-                    (fn exp2 =>
-                      (>>= (symb ")")
-                        (fn _ =>
-                          (return (Add (exp1,exp2))))))))))))))
-
-and ParseDiv _ =
-  (>>= (symb "/")
-    (fn _ =>
-       (>>= (symb "("))
-       (fn _ =>
-         (>>= (ParseExpr ())
-            (fn exp1 =>
-               (>>= (symb ",")
-                  (fn _ =>
-                    (>>= (ParseExpr ())
-                    (fn exp2 =>
-                      (>>= (symb ")")
-                        (fn _ =>
-                          (return (Div (exp1,exp2))))))))))))))
-
-and ParseEqualp _ =
-  (>>= (symb "=")
-    (fn _ =>
-       (>>= (symb "("))
-       (fn _ =>
-         (>>= (ParseExpr ())
-            (fn exp1 =>
-               (>>= (symb ",")
-                  (fn _ =>
-                    (>>= (ParseExpr ())
-                    (fn exp2 =>
-                      (>>= (symb ")")
-                        (fn _ =>
-                          (return (Equalp (exp1,exp2))))))))))))))
-
-and ParseGreaterp _ =
-  (>>= (symb ">")
-    (fn _ =>
-       (>>= (symb "("))
-       (fn _ =>
-         (>>= (ParseExpr ())
-            (fn exp1 =>
-               (>>= (symb ",")
-                  (fn _ =>
-                    (>>= (ParseExpr ())
-                    (fn exp2 =>
-                      (>>= (symb ")")
-                        (fn _ =>
-                          (return (Greaterp (exp1,exp2))))))))))))))
-
-
-and ParseLessp _ =
-  (>>= (symb "<")
-    (fn _ =>
-       (>>= (symb "("))
-       (fn _ =>
-         (>>= (ParseExpr ())
-            (fn exp1 =>
-               (>>= (symb ",")
-                  (fn _ =>
-                    (>>= (ParseExpr ())
-                    (fn exp2 =>
-                      (>>= (symb ")")
-                        (fn _ =>
-                          (return (Lessp (exp1,exp2))))))))))))))
-
-
-and ParseCons _ =
-  (>>= (symb "cons")
-    (fn _ =>
-       (>>= (symb "("))
-       (fn _ =>
-         (>>= (ParseExpr ())
-            (fn exp1 =>
-               (>>= (symb ",")
-                  (fn _ =>
-                    (>>= (ParseExpr ())
-                    (fn exp2 =>
-                      (>>= (symb ")")
-                        (fn _ =>
-                          (return (Cons (exp1,exp2))))))))))))))
+and ParseSub      _ = make_binop "-" Sub
+and ParseMult     _ = make_binop "*" Mult
+and ParseAdd      _ = make_binop "+" Add
+and ParseDiv      _ = make_binop "/" Div
+and ParseEqualp   _ = make_binop "=" Equalp
+and ParseGreaterp _ = make_binop ">" Greaterp
+and ParseLessp    _ = make_binop "<" Lessp
+and ParseCons     _ = make_binop "cons" Cons
+and ParseSetref   _ = make_binop "setref" Setref
 
 and ParseId _ =
   (>>= (token (many (sat isAlphaNum)))
@@ -587,29 +525,43 @@ and ParseList _ =
               (>>= (manyn (>>= (symb ",") (fn _ => (ParseExpr ()))))
                    (fn ns =>
                      (>>= (symb "}")
-                          (fn _ => (return (to_cons_list (cons n ns)))))))))))
-        
+                          (fn _ => (return (to_cons_list (n :: ns)))))))))))
+
+and ParseBegin _ =
+    (>>= (symb "begin")
+     (fn _ =>
+       (>>= (ParseExpr ())
+            (fn n =>
+              (>>= (manyn (>>= (symb ";") (fn _ => (ParseExpr ()))))
+                   (fn ns =>
+                     (>>= (symb "end")
+                          (fn _ => (return (to_begin_list (n :: ns)))))))))))
+
 
 and ParseExpr _ = (ParseIf ())
               +++ (ParseConst ())
-              +++ (ParseBoolean ())              
-              +++ (ParseComment ())              
+              +++ (ParseBoolean ())
+              +++ (ParseComment ())
               +++ (ParseCons ())
-              +++ (ParseList ())              
+              +++ (ParseList ())
+              +++ (ParseBegin ())
               +++ (ParseCar ())
               +++ (ParseCdr ())
               +++ (ParseNullp ())
               +++ (ParseEmptyList ())
               +++ (ParseZerop ())
               +++ (ParseGreaterp ())
-              +++ (ParseLessp ())              
-              +++ (ParseEqualp ())                            
+              +++ (ParseLessp ())
+              +++ (ParseEqualp ())
               +++ (ParseSub ())
               +++ (ParseMult ())
               +++ (ParseAdd ())
-              +++ (ParseDiv ())                            
+              +++ (ParseDiv ())
               +++ (ParseLet ())
-              +++ (ParseLetRec ())              
+              +++ (ParseLetRec ())
+              +++ (ParseSetref ())
+              +++ (ParseDeref ())
+              +++ (ParseNewref ())
               +++ (ParseProc ())
               +++ (ParseCall ())
               +++ (ParseVar ())
@@ -618,15 +570,13 @@ in
 end
 
 
-
-
 fun show (x : (Expr * string) list) = #1 (car x)
 
 val read = (show o try_read)
 
 fun evalo e = eval e EmptyEnv
 
-val run = (evalo o read)
+val run = let in (initialize_store ()); (evalo o read) end
 
 fun readfile(filename) =
     let val file = TextIO.openIn filename
@@ -654,6 +604,7 @@ and val_to_string(v) = case v of
                  | Nil         => "()"
                  | Cell a  => "(" ^ (cell_to_string (Cell a)) ^ ")"
                  | Procedure (name, _, _) => "#<procedure " ^ name ^">"
+                 | Ref a => "#<reference " ^ Int.toString a ^ ">"
                  | _           => "#<value>"
 (* Read evaluate print a file*)
 fun repf(filename) = print ("Result of evaluation: " ^ (val_to_string o run o readfile) filename ^ "\n")
