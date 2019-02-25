@@ -49,5 +49,5 @@ sieve(s) = cons(car(s),
 integersFrom(z) = cons(z, proc(delay) (integersFrom +(z,1)))
 in
 
-[ Get the first hundred prime numbers ]
-((take 100) (sieve (integersFrom 2)))
+[ Get the first twenty prime numbers ]
+((take 20) (sieve (integersFrom 2)))
