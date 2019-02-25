@@ -1,7 +1,10 @@
 [ This program shows how the language supports functions
   as first-class citizens. ]
-let square = proc (x) *(x,x) in
-letrec map(f) = proc(l) if null?(l)
-                        then emptylist
-                        else cons((f car(l)), ((map f) cdr(l))) in
-   ((map square) list(1,2,3))
+letrec
+square(x) = *(x,x)
+map(f) = proc(l) if null?(l)
+                 then emptylist
+                 else cons((f car(l)), ((map f) cdr(l)))
+   in
+
+((map square) list(1,2,3,4,5,6,7,8,9,10))

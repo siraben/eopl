@@ -15,7 +15,7 @@ datatype Val =
 
 and Env = EmptyEnv
         | ExtendEnv of Var * Val * Env
-        | ExtendEnvRec of Var * Var * Expr * Env
+        | ExtendEnvRec of (Var list) * (Var list) * (Expr list) * Env
 
 and Expr = Const of int
          | ConstBool of bool
@@ -37,7 +37,7 @@ and Expr = Const of int
          | If of Expr * Expr * Expr
          | Var of string
          | Let of Var * Expr * Expr
-         | Letrec of Var * Var * Expr * Expr
+         | Letrec of (Var list) * (Var list) * (Expr list) * Expr
          | Proc of Var * Expr
          | Call of Expr * Expr
          | Newref of Expr
@@ -48,17 +48,29 @@ and Expr = Const of int
 exception UnboundVariable
 exception UnimplementedOperation
 
+fun mplus (SOME x) (SOME y) = SOME (x + y)
+  | mplus _ _ = NONE
+
+(* Find the location of an item in the list. *)
+fun location x []    = NONE
+  | location x (y::ys) = if x = y then SOME 0 else (mplus (SOME 1)
+                                                          (location x ys))
+
 fun lookup (var : Var) (env : Env) =
     case env of
-        EmptyEnv => (print("Unbound variable: \"" ^ var ^ "\""); raise UnboundVariable)
+        EmptyEnv => (print("Unbound variable: \"" ^ var ^ "\"");
+                     raise UnboundVariable)
       | ExtendEnv (a, b, restenv) =>
         if var = a
         then b
         else lookup var restenv
-      | ExtendEnvRec (pname, bvar, pbody, senv) =>
-        if var = pname
-        then Procedure (bvar,pbody,env)
-        else lookup var senv
+      | ExtendEnvRec (pnames, bvars, pbodies, senv) =>
+        case location var pnames of
+             SOME n => Procedure (List.nth (bvars, n),
+                                  List.nth (pbodies,n),
+                                  env)
+          |  NONE => lookup var senv
+
 
 
 exception ToBoolExtractFailed
@@ -107,17 +119,106 @@ fun setref r (v : Val) = (the_store := List.update (!the_store,r,v))
 fun apply_proc (p : Val -> Val) (v : Val) = (p v)
 
 exception TypeError
+
+fun cell_to_string c =
+    case c of
+      Nil => ""
+    | Cell (a, b) => val_to_string(a) ^ ( case b of
+                       Cell c =>  " " ^ cell_to_string(Cell c)
+                    |  Nil => ""
+                    |  c => " . " ^ val_to_string(c) )
+    | _ => raise TypeError
+
+
+and val_to_string v = case v of
+                   Bool a      => Bool.toString a
+                 | Num a       => Int.toString a
+                 | Nil         => "()"
+                 | Cell a  => "(" ^ (cell_to_string (Cell a)) ^ ")"
+                 | Procedure (name, _, _) => "#<procedure " ^ name ^">"
+                 | Ref a => "#<reference " ^ Int.toString a ^ ">"
+                 | _           => "#<value>"
+
+val save_env = ref EmptyEnv
+
+exception InvalidLetrecClauses
+
+fun cons_to_string c =
+    case c of
+      Emptylist => ""
+    | Cons (a, b) => "cons(" ^ expr_to_string(a) ^ ", " ^
+                               expr_to_string(b) ^ ")"
+    | _ => raise TypeError
+
+
+and op_to_string    name arg = name ^ "(" ^ (expr_to_string arg) ^ ")"
+and binop_to_string name (a : Expr, b : Expr) =
+                    name ^ "(" ^ (expr_to_string a) ^ ", " ^
+                                 (expr_to_string b) ^ ")"
+and letrec_clauses_to_string (n::ns) (b::bs) (bo::bos) =
+                     n ^ "(" ^ b ^ ") = " ^ (expr_to_string bo) ^ "\n" ^
+                     (letrec_clauses_to_string ns bs bos)
+  | letrec_clauses_to_string [] [] [] = "\n"
+  | letrec_clauses_to_string _ _ _ = raise InvalidLetrecClauses
+
+and expr_to_string v = case v of
+                   ConstBool a      => Bool.toString a
+                 | Const a       => Int.toString a
+                 | Emptylist         => "emptylist"
+                 | Cons a  => (cons_to_string (Cons a))
+                 | Proc (var, expr) => "proc(" ^ var ^ ") " ^ (expr_to_string expr)
+                 | Sub a => binop_to_string "-" a
+                 | Add a => binop_to_string "+" a
+                 | Mult a => binop_to_string "*" a
+                 | Div a => binop_to_string "/" a
+                 | Greaterp a => binop_to_string ">" a
+                 | Lessp a => binop_to_string "<" a
+                 | Equalp a => binop_to_string "=" a
+
+
+                 | Zerop a => op_to_string "zero?" a
+                 | Nullp a => op_to_string "null?" a
+                 | Car a => op_to_string "car" a
+                 | Cdr a => op_to_string "cdr" a
+                 | Begin (a,b) => "begin " ^ (expr_to_string a) ^ ";\n" ^
+                                             (expr_to_string b) ^ "end"
+                 | Call (a,b) => "(" ^ (expr_to_string a) ^ " " ^ (expr_to_string b) ^ ")"
+                 | Var a  => a
+                 | If (a,b,c) => "if " ^ (expr_to_string a) ^
+                                 "\nthen " ^ (expr_to_string b) ^
+                                 "\nelse " ^ (expr_to_string c) ^ "\n"
+                 | Let (v,e1,e2) => "let " ^ v ^ " = " ^
+                                          (expr_to_string e1)
+                                    ^ "   in " ^ (expr_to_string e2)
+                 | Letrec (names,bvars,bodies,body) =>
+                                "letrec " ^
+                                  (letrec_clauses_to_string names bvars bodies)
+                                    ^ " in " ^ (expr_to_string body)
+                 | _           => "#<value>"
+
+fun env_to_string EmptyEnv = "EmptyEnv"
+  | env_to_string (ExtendEnv (va,vl,env)) = "ExtendEnv (var:" ^ va ^ " val:" ^
+                                        (val_to_string vl) ^ ") " ^ (env_to_string env)
+  | env_to_string (ExtendEnvRec (va,vl,exps,env)) = "ExtendEnvRec " ^
+                              "[" ^ (String.concatWith " " va) ^ "] [" ^
+                               (String.concatWith " " vl) ^ "] [" ^
+                               (String.concatWith " " (map expr_to_string exps)) ^ "] "  ^
+                               (env_to_string env)
 exception NoMatchingBegin
 
 fun eval (e : Expr) (p : Env) =
+    ( (*  For debugging purposes.
+      print("Evaluating\n" ^ (expr_to_string e) ^ "\n---\n");
+      print("Environment\n" ^ (env_to_string p) ^ "\n---\n");
+      save_env := p; *)
     let
       fun val_to_proc (e : Val) =
       case e of
          Procedure (var, body, env) => (fn value => (eval body (ExtendEnv (var, value, env))))
          | _ => raise ToProcExtractFailed
-      fun eval_binop constructor f (exp1 : Expr, exp2 : Expr) (p : Env) = 
+      fun eval_binop constructor f (exp1 : Expr, exp2 : Expr) (p : Env) =
            constructor (f ((val_to_num (eval exp1 p)),(val_to_num (eval exp2 p))))
-      fun eval_op constructor f (exp1 : Expr) (p : Env) = 
+      fun eval_op constructor f (exp1 : Expr) (p : Env) =
            constructor (f (val_to_num (eval exp1 p)))
       in
     case e of
@@ -164,8 +265,8 @@ fun eval (e : Expr) (p : Env) =
                                 else (eval alt p)
     | Let (var, exp1, body) =>
       eval body (ExtendEnv (var, (eval exp1 p), p))
-    | Letrec (pname, bvar, pbody, lrbody) =>
-      eval lrbody (ExtendEnvRec (pname, bvar, pbody, p))
+    | Letrec (pnames, bvars, pbodies, lrbody) =>
+      eval lrbody (ExtendEnvRec (pnames, bvars, pbodies, p))
 
     | Proc (var, body) => Procedure (var, body, p)
     | Newref exp1  =>  let
@@ -190,12 +291,12 @@ fun eval (e : Expr) (p : Env) =
 
     | Call (rator, rand) =>
                       let
-                         val proc = (val_to_proc (eval rator p))
-                         val arg  = (eval rand p)
+                          val arg  = (eval rand p)
+                          val proc = (val_to_proc (eval rator p))
                       in
                          apply_proc proc arg
                       end
-    end
+    end )
 
 
 open Char
@@ -244,8 +345,7 @@ struct
 end
 
 open ParserM
-infix `>>=`
-fun a `>>=` b = >>= a b
+
 val item : char Parser =
     Parser (fn s =>
                case (explode s)
@@ -344,7 +444,7 @@ val digit =
           (fn a => (return a)))
 
 val negnat =
-     (>>= (char #"-")
+     (>>= ((char #"-") +++ (char #"~"))
        (fn _ =>
          (>>= (many1 digit)
            (fn xs => (case (Int.fromString xs)
@@ -358,6 +458,8 @@ val nat =
 
 val natural = (token nat)
 
+fun up_to c = (>>= (many (sat (fn x => (not (x = c))))) (fn a => (return a)))
+
 fun is_cons (Cons _) = true
   | is_cons _        = false
 
@@ -370,11 +472,16 @@ fun to_cons_list [] = Emptylist
 fun to_begin_list []      = BeginEnd
   | to_begin_list (x::xs) = Begin (x,to_begin_list xs)
 
+fun parse_keyword_const keyword const = (>>= keyword (fn _ => (return const)))
+
 val try_read =
 let fun ParseConst _ = (>>= natural (fn n => return (Const n)))
-and ParseTrue _ = (>>= (symb "true") (fn _ => (return (ConstBool true))))
-and ParseFalse _ = (>>= (symb "false") (fn _ => (return (ConstBool false))))
+
+and ParseTrue _ = parse_keyword_const (symb "true") (ConstBool true)
+and ParseFalse _ = parse_keyword_const (symb "false") (ConstBool false)
 and ParseBoolean _ = ((ParseTrue ()) +++ (ParseFalse ()))
+and ParseEmptyList _ = parse_keyword_const (symb "emptylist") Emptylist
+
 and ParseIf _ =
     (>>= (symb "if")
       (fn _ =>
@@ -393,21 +500,14 @@ and ParseIf _ =
 
 and make_op keyword constructor =
 (>>= (symb keyword)
-      (fn _ =>
-        (>>= (symb "("))
-        (fn _ =>
-         (>>= (ParseExpr ())
-         (fn exp1 =>
-          (>>= (symb ")")
+       (fn _ =>
+         (>>= (symb "("))
            (fn _ =>
-              (return (constructor exp1)))))))))
-
-and ParseZerop  _ = make_op "zero?" Zerop
-and ParseNullp  _ = make_op "null?" Nullp
-and ParseCar    _ = make_op "car" Car
-and ParseCdr    _ = make_op "cdr" Cdr
-and ParseNewref _ = make_op "newref" Newref
-and ParseDeref  _ = make_op "deref" Deref
+             (>>= (ParseExpr ())
+               (fn exp1 =>
+                 (>>= (symb ")")
+                   (fn _ =>
+                     (return (constructor exp1)))))))))
 
 and make_binop keyword constructor =
   (>>= (symb keyword)
@@ -424,6 +524,14 @@ and make_binop keyword constructor =
                         (fn _ =>
                           (return (constructor (exp1,exp2))))))))))))))
 
+
+and ParseZerop  _ = make_op "zero?" Zerop
+and ParseNullp  _ = make_op "null?" Nullp
+and ParseCar    _ = make_op "car" Car
+and ParseCdr    _ = make_op "cdr" Cdr
+and ParseNewref _ = make_op "newref" Newref
+and ParseDeref  _ = make_op "deref" Deref
+
 and ParseSub      _ = make_binop "-" Sub
 and ParseMult     _ = make_binop "*" Mult
 and ParseAdd      _ = make_binop "+" Add
@@ -437,10 +545,6 @@ and ParseSetref   _ = make_binop "setref" Setref
 and ParseId _ =
   (>>= (token (many (sat isAlphaNum)))
      (fn v => (return v)))
-
-and ParseEmptyList _ =
-  (>>= (symb "emptylist")
-     (fn v => (return Emptylist)))
 
 and ParseVar _ =
   (>>= (ParseId ())
@@ -462,9 +566,7 @@ and ParseLet _ =
                          (return (Let (v,e,e2)))))))))))))))
 
 
-and ParseLetRec _ =
-  (>>= (symb "letrec")
-   (fn _ =>
+and ParseLetrecClause _ =
   (>>= (ParseId ())
     (fn pname =>
       (>>= (symb "(")
@@ -477,11 +579,27 @@ and ParseLetRec _ =
          (fn _ =>
            (>>= (ParseExpr ())
              (fn pbody =>
-                (>>= (symb "in")
+                (return (pname,bvar,pbody))))))))))))))
+and ParseLetrecComment _ =
+    (>>= (ParseComment ())
+         (fn _ => (ParseLetrecClause ())))
+and ParseLetrec _ =
+  (>>= (symb "letrec")
+   (fn _ =>
+   (>>= (manyn ((ParseLetrecClause ())  +++ (ParseLetrecComment ())))
+           (fn clauses =>
+            (>>= (symb "in")
                    (fn _ =>
                      (>>= (ParseExpr ())
                        (fn lrbody =>
-                         (return (Letrec (pname,bvar,pbody,lrbody)))))))))))))))))))))
+             let
+                 val names  = map #1 clauses
+                 val vars   = map #2 clauses
+                 val bodies = map #3 clauses
+             in
+                 return (Letrec (names,vars,bodies,lrbody))
+             end))))))))
+
 
 and ParseProc _ =
   (>>= (symb "proc")
@@ -509,34 +627,30 @@ and ParseCall _ =
 and ParseComment _ =
    (>>= (symb "[")
       (fn _ =>
-         (>>= (many (sat (fn x => (not (x = #"]")))))
-              (fn _ => (>>= (symb "]") (fn _ => (ParseExpr ())))))))
+         (>>= (up_to #"]")
+              (fn _ => (symb "]")))))
 
 and ParseList _ =
     (>>= (symb "list(")
      (fn _ =>
-       (>>= (ParseExpr ())
-            (fn n =>
-              (>>= (manyn (>>= (symb ",") (fn _ => (ParseExpr ()))))
-                   (fn ns =>
-                     (>>= (symb ")")
-                          (fn _ => (return (to_cons_list (n :: ns)))))))))))
+       (>>= (sepbyn (ParseExpr ()) (symb ","))
+              (fn ns =>
+                (>>= (symb ")")
+                  (fn _ => (return (to_cons_list ns))))))))
 
 and ParseBegin _ =
     (>>= (symb "begin")
      (fn _ =>
-       (>>= (ParseExpr ())
-            (fn n =>
-              (>>= (manyn (>>= (symb ";") (fn _ => (ParseExpr ()))))
-                   (fn ns =>
-                     (>>= (symb "end")
-                          (fn _ => (return (to_begin_list (n :: ns)))))))))))
+        (>>= (sepbyn (ParseExpr ()) (symb ";"))
+           (fn ns =>
+              (>>= (symb "end")
+                (fn _ => (return (to_begin_list ns))))))))
 
 
 and ParseExpr _ = (ParseIf ())
               +++ (ParseConst ())
               +++ (ParseBoolean ())
-              +++ (ParseComment ())
+              +++ (>>= (ParseComment ()) (fn _ => (ParseExpr ())))
               +++ (ParseCons ())
               +++ (ParseList ())
               +++ (ParseBegin ())
@@ -553,7 +667,7 @@ and ParseExpr _ = (ParseIf ())
               +++ (ParseAdd ())
               +++ (ParseDiv ())
               +++ (ParseLet ())
-              +++ (ParseLetRec ())
+              +++ (ParseLetrec ())
               +++ (ParseSetref ())
               +++ (ParseDeref ())
               +++ (ParseNewref ())
@@ -561,7 +675,7 @@ and ParseExpr _ = (ParseIf ())
               +++ (ParseCall ())
               +++ (ParseVar ())
 in
- (fn s => parse (ParseExpr ()) s)
+  (fn s => parse (ParseExpr ()) s)
 end
 
 
@@ -583,25 +697,8 @@ fun readfile(filename) =
 fun runfile(filename) = (run o readfile) filename
 
 
-fun cell_to_string c =
-    case c of
-      Nil => ""
-    | Cell (a, b) => val_to_string(a) ^ ( case b of
-                       Cell c =>  " " ^ cell_to_string(Cell c)
-                    |  Nil => ""
-                    |  c => " . " ^ val_to_string(c) )
-    | _ => raise TypeError
-
-
-and val_to_string(v) = case v of
-                   Bool a      => Bool.toString a
-                 | Num a       => Int.toString a
-                 | Nil         => "()"
-                 | Cell a  => "(" ^ (cell_to_string (Cell a)) ^ ")"
-                 | Procedure (name, _, _) => "#<procedure " ^ name ^">"
-                 | Ref a => "#<reference " ^ Int.toString a ^ ">"
-                 | _           => "#<value>"
 (* Read evaluate print a file*)
-fun repf(filename) = print ("Result of evaluation: " ^ (val_to_string o run o readfile) filename ^ "\n")
+fun repf(filename) = print ("Result of evaluation: " ^
+                            (val_to_string o run o readfile) filename ^ "\n")
 
 fun parse_tree filename = (read o readfile) filename

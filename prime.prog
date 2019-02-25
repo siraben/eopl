@@ -14,35 +14,29 @@ letrec range(start) =
             -1
       in
         cons(start, ((range +(start, step)) stop))
-  in
 
 [ Higher order function filter ]    
-letrec filter(p) =
+filter(p) =
   proc (l)
     if null?(l)
     then emptylist
     else if (p car(l)) then
       cons(car(l), ((filter p) cdr(l)))
       else ((filter p) cdr(l))
-  in
 
 [ Modular arithmetic ]
-let mod =
-  proc(x)
-    proc(y)
-      let q = /(x,y) in
-        let a = *(y, q) in
-          -(x, a)
-  in
-
+mod(x) =
+  proc(y)
+    let q = /(x,y) in
+      let a = *(y, q) in
+        -(x, a)
 
 [ Is n divisible by b? ]
-let dividesq = proc(n) proc(d) zero?(((mod n) d))
-  in
+dividesq(n) = proc(d) zero?(((mod n) d))
 
 [ Prime loop ]
 
-let primeq = proc(n)
+primeq(n) =
   if =(n, 1)
     then false
   else
@@ -54,6 +48,5 @@ let primeq = proc(n)
            else (primeloop +(d, 1))
       in
     (primeloop 2)
-    in
-
+ in
 ((filter primeq) ((range 1) 100))

@@ -3,13 +3,11 @@ letrec append(l) =
    if null?(l)
    then s
    else cons(car(l),((append cdr(l)) s))
-  in
-letrec reverse(l) =
+reverse(l) =
   if null?(l)
   then emptylist
   else ((append (reverse(cdr(l)))) cons(car(l),emptylist))
-  in
-letrec range(start) =
+range(start) =
   proc (stop)
     if
       =(start,stop)
@@ -23,7 +21,7 @@ letrec range(start) =
           else
             -1
       in
-        cons(start, (range +(start, step)) stop)
+        cons(start, ((range +(start, step)) stop))
   in
 
 ((append ((range 1) 10)) ((range 11) 20))
