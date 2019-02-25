@@ -15,7 +15,7 @@ letrec range(start) =
       in
         cons(start, ((range +(start, step)) stop))
 
-[ Higher order function filter ]    
+[ Higher order function filter ]
 filter(p) =
   proc (l)
     if null?(l)

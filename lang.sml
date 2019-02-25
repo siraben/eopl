@@ -207,10 +207,11 @@ fun env_to_string EmptyEnv = "EmptyEnv"
 exception NoMatchingBegin
 
 fun eval (e : Expr) (p : Env) =
-    ( (*  For debugging purposes.
-      print("Evaluating\n" ^ (expr_to_string e) ^ "\n---\n");
-      print("Environment\n" ^ (env_to_string p) ^ "\n---\n");
-      save_env := p; *)
+    ( (*  For debugging purposes. *)
+
+      (* print("Evaluating\n" ^ (expr_to_string e) ^ "\n---\n"); *)
+      (* print("Environment\n" ^ (env_to_string p) ^ "\n---\n"); *)
+      save_env := p;
     let
       fun val_to_proc (e : Val) =
       case e of

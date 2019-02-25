@@ -8,8 +8,8 @@ Languages](https://mitpress.mit.edu/books/essentials-programming-languages).
 ## Why?
 It's somewhat awkward to fit in a datatype language into Scheme, which
 lacks static typing and pattern matching.  Why not use Standard ML,
-which uses the powerful Hindley-Milner type system to do the heavy
-lifting?
+which allows us to use the powerful Hindley-Milner type system to do
+the heavy lifting?
 
 ## Implementation
 The parser is implemented with parser combinators.  Currently it's
@@ -31,73 +31,61 @@ will find that adding extra parens around expressions can dramatically
 change its semantics.  `parse_tree` lets you see those invisible empty
 string variable names that may pop up, for instance.
 
-## Program example (prime numbers)
+## Program example (prime numbers with lazy streams)
 ```text
-[ These square brackets are comments, a feature I added that was
-  not in EOPL. ]
-  
-[ Generate a range of numbers ]
-[ letrec allows a procedure to refer to itself in the definition ]
-letrec range(start) =
-  proc (stop)
-    if
-      =(start,stop)
-    then
-      emptylist
-    else
-      let step =
-        if <(start,stop)
-          then
-            1
-          else
-            -1
-      in
-        [ Every procedure takes one argument, hence the extra parens ]
-        cons(start, ((range +(start, step)) stop))
-  in
-
-[ Higher order function filter ]
-letrec filter(p) =
-  proc (l)
-    if null?(l)
-    then emptylist
-    else if (p car(l)) then
-      cons(car(l), ((filter p) cdr(l)))
-      else ((filter p) cdr(l))
-  in
-
+[ Comments are shown with square brackets (which cannot be nested) ]
+[ Even though our language has eager evaluation, by using closures we can
+  simulate laziness. ]
+letrec
+streamCar(s)  = car(s)
+[ We don't have thunks so pass a dummy value ]
+streamCdr(s)  = (cdr(s) 44)
+take(n)       = proc(s)
+                    if
+                      zero?(n)
+                    then
+                      emptylist
+                    else
+                      cons((streamCar s),
+                           ((take -(n,1)) (streamCdr s)))
+[ Some examples of stream operations. ]
+repeat(n)     = cons(n, proc(delay) (repeat n))
+addStreams(a) = proc(b) cons(+(car(a),car(b)),
+                             proc(delay)
+                                ((addStreams (streamCdr a)) (streamCdr b)))
 [ Modular arithmetic ]
-[ Multiplication, integer division and more operations are added ]
-let mod =
-  proc(x)
-    proc(y)
-      let q = /(x,y) in
-        let a = *(y, q) in
-          -(x, a)
-  in
+mod(x) =
+  proc(y)
+    let q = /(x,y) in
+      let a = *(y, q) in
+        -(x, a)
 
+[ Logical not ]
+not(b) = if b then false else true
 
-[ Is n divisible by b? ]
-let dividesq = proc(n) proc(d) zero?(((mod n) d))
-  in
+[ Is n not divisible by b? ]
+ndividesq(d) = proc(n) (not zero?(((mod n) d)))
+filterStream(f) = proc(s)
+                    if
+                      (f car(s))
+                    then
+                      cons(car(s),
+                           proc(delay) ((filterStream f) (streamCdr s)))
+                    else
+                      ((filterStream f) (streamCdr s))
 
-[ Prime loop ]
-[ Indentation doesn't matter, but I keep mine ML-like ]
-let primeq = proc(n)
-  if =(n, 1)
-    then false
-  else
-    letrec primeloop(d) =
-      if <(n, *(d,d))
-      then true
-      else if ((dividesq n) d)
-           then false
-           else (primeloop +(d, 1))
-      in
-    (primeloop 2)
-    in
+[ The Sieve of Eratosthenes ]
+sieve(s) = cons(car(s),
+                proc(delay)
+                  (sieve ((filterStream (ndividesq car(s)))
+                          (streamCdr s))))
 
-((filter primeq) ((range 1) 100))
+[ Generate integers starting from a number ]
+integersFrom(z) = cons(z, proc(delay) (integersFrom +(z,1)))
+in
+
+[ Get the first hundred prime numbers ]
+((take 100) (sieve (integersFrom 2)))
 ```
 
 ## Usage example
@@ -105,14 +93,14 @@ let primeq = proc(n)
 - parse_tree "factorial.prog";
 val it =
   Letrec
-    ("fact","n",
-     If
-       (Zerop (Var "n"),Const 1,
-        Mult (Var "n",Call (Var "fact",Sub (Var "n",Const 1)))),
+    (["fact"],["n"],
+     [If
+        (Zerop (Var "n"),Const 1,
+         Mult (Var "n",Call (Var "fact",Sub (Var "n",Const 1))))],
      Call (Var "fact",Const 5)) : Expr
 - runfile "factorial.prog";
 val it = Num 120 : Val
-- repf "prime.prog";
-Result of evaluation: (2 3 5 7 11 13 17 19 23 29 31 37 41 43 47 53 59 61 67 71 73 79 83 89 97)
+- repf "streams.prog";
+Result of evaluation: (2 3 5 7 11 13 17 19 23 29 31 37 41 43 47 53 59 61 67 71 73 79 83 89 97 101 103 107 109 113 127 131 137 139 149 151 157 163 167 173 179 181 191 193 197 199 211 223 227 229 233 239 241 251 257 263 269 271 277 281 283 293 307 311 313 317 331 337 347 349 353 359 367 373 379 383 389 397 401 409 419 421 431 433 439 443 449 457 461 463 467 479 487 491 499 503 509 521 523 541)
 val it = () : unit
 ```

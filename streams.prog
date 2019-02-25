@@ -1,0 +1,53 @@
+[ Comments are shown with square brackets (which cannot be nested) ]
+[ Even though our language has eager evaluation, by using closures we can
+  simulate laziness. ]
+letrec
+streamCar(s)  = car(s)
+[ We don't have thunks so pass a dummy value ]
+streamCdr(s)  = (cdr(s) 44)
+take(n)       = proc(s)
+                    if
+                      zero?(n)
+                    then
+                      emptylist
+                    else
+                      cons((streamCar s),
+                           ((take -(n,1)) (streamCdr s)))
+[ Some examples of stream operations. ]
+repeat(n)     = cons(n, proc(delay) (repeat n))
+addStreams(a) = proc(b) cons(+(car(a),car(b)),
+                             proc(delay)
+                                ((addStreams (streamCdr a)) (streamCdr b)))
+[ Modular arithmetic ]
+mod(x) =
+  proc(y)
+    let q = /(x,y) in
+      let a = *(y, q) in
+        -(x, a)
+
+[ Logical not ]
+not(b) = if b then false else true
+
+[ Is n not divisible by b? ]
+ndividesq(d) = proc(n) (not zero?(((mod n) d)))
+filterStream(f) = proc(s)
+                    if
+                      (f car(s))
+                    then
+                      cons(car(s),
+                           proc(delay) ((filterStream f) (streamCdr s)))
+                    else
+                      ((filterStream f) (streamCdr s))
+
+[ The Sieve of Eratosthenes ]
+sieve(s) = cons(car(s),
+                proc(delay)
+                  (sieve ((filterStream (ndividesq car(s)))
+                          (streamCdr s))))
+
+[ Generate integers starting from a number ]
+integersFrom(z) = cons(z, proc(delay) (integersFrom +(z,1)))
+in
+
+[ Get the first hundred prime numbers ]
+((take 100) (sieve (integersFrom 2)))
