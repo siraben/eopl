@@ -93,7 +93,7 @@ fun newref (v : Val) = let
                            val nr = List.length (!the_store)
                        in
                            the_store := (!the_store) @ [v];
-                           nr
+                           Ref nr
                        end
 
 fun deref r = List.nth ((!the_store),r)
@@ -115,6 +115,10 @@ fun eval (e : Expr) (p : Env) =
       case e of
          Procedure (var, body, env) => (fn value => (eval body (ExtendEnv (var, value, env))))
          | _ => raise ToProcExtractFailed
+      fun eval_binop constructor f (exp1 : Expr, exp2 : Expr) (p : Env) = 
+           constructor (f ((val_to_num (eval exp1 p)),(val_to_num (eval exp2 p))))
+      fun eval_op constructor f (exp1 : Expr) (p : Env) = 
+           constructor (f (val_to_num (eval exp1 p)))
       in
     case e of
       Const n => Num n
@@ -145,22 +149,15 @@ fun eval (e : Expr) (p : Env) =
                  | _ =>    Bool false
                  end
 
-    | Sub (exp1, exp2) => Num (val_to_num (eval exp1 p) -
-                               val_to_num (eval exp2 p))
+    | Sub args      => (eval_binop Num  (op -) args p)
+    | Add args      => (eval_binop Num  (op +) args p)
+    | Mult args     => (eval_binop Num  (op *) args p)
+    | Div args      => (eval_binop Num  (op div) args p)
+    | Zerop args    => (eval_op    Bool (fn x => x = 0) args p)
+    | Equalp args   => (eval_binop Bool (op =) args p)
+    | Greaterp args => (eval_binop Bool (op >) args p)
+    | Lessp args    => (eval_binop Bool (op <) args p)
 
-    | Add (exp1, exp2) => Num (val_to_num (eval exp1 p) +
-                               val_to_num (eval exp2 p))
-
-    | Mult (exp1, exp2) => Num (val_to_num (eval exp1 p) *
-                                val_to_num (eval exp2 p))
-
-    | Div (exp1, exp2) => Num (val_to_num (eval exp1 p) div
-                               val_to_num (eval exp2 p))
-
-    | Zerop e => Bool ((val_to_num (eval e p)) = 0)
-    | Equalp (exp1, exp2) => Bool ((val_to_num (eval exp1 p)) = (val_to_num (eval exp2 p)))
-    | Greaterp (exp1, exp2) => Bool ((val_to_num (eval exp1 p)) >  (val_to_num (eval exp2 p)))
-    | Lessp (exp1, exp2) => Bool ((val_to_num (eval exp1 p)) < (val_to_num (eval exp2 p)))
 
     | If (pred, conseq, alt) => if (val_to_bool (eval pred p))
                                 then (eval conseq p)
@@ -174,7 +171,7 @@ fun eval (e : Expr) (p : Env) =
     | Newref exp1  =>  let
                           val v1 = eval exp1 p
                        in
-                          Ref (newref v1)
+                          newref v1
                        end
     | Deref exp1  =>  let
                           val v1 = eval exp1 p
@@ -192,15 +189,13 @@ fun eval (e : Expr) (p : Env) =
                       end
 
     | Call (rator, rand) =>
-
-      let
-         val proc = (val_to_proc (eval rator p))
-         val arg  = (eval rand p)
-      in
-         apply_proc proc arg
-      end
-      end
-
+                      let
+                         val proc = (val_to_proc (eval rator p))
+                         val arg  = (eval rand p)
+                      in
+                         apply_proc proc arg
+                      end
+    end
 
 
 open Char
@@ -518,13 +513,13 @@ and ParseComment _ =
               (fn _ => (>>= (symb "]") (fn _ => (ParseExpr ())))))))
 
 and ParseList _ =
-    (>>= (symb "{")
+    (>>= (symb "list(")
      (fn _ =>
        (>>= (ParseExpr ())
             (fn n =>
               (>>= (manyn (>>= (symb ",") (fn _ => (ParseExpr ()))))
                    (fn ns =>
-                     (>>= (symb "}")
+                     (>>= (symb ")")
                           (fn _ => (return (to_cons_list (n :: ns)))))))))))
 
 and ParseBegin _ =
