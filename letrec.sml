@@ -1,3 +1,4 @@
+(* Implementing Letrec *)
 Control.Print.printDepth := 100;
 open Int
 
@@ -9,7 +10,6 @@ datatype Val =
          | Num of int
          | Bool of bool
          | String of string
-         | Ref of int
          | Procedure of Var * Expr * Env
 
 and Env = EmptyEnv
@@ -39,9 +39,6 @@ and Expr = Const of int
          | Letrec of (Var list) * (Var list) * (Expr list) * Expr
          | Proc of Var * Expr
          | Call of Expr * Expr
-         | Newref of Expr
-         | Deref of Expr
-         | Setref of Expr * Expr
 
 
 exception UnboundVariable
@@ -74,7 +71,6 @@ fun lookup (var : Var) (env : Env) =
 exception ToBoolExtractFailed
 exception ToNumExtractFailed
 exception ToProcExtractFailed
-exception ToRefExtractFailed
 
 fun val_to_num (e : Val) =
     case e of
@@ -85,33 +81,6 @@ fun val_to_bool (e : Val) =
     case e of
       Bool b => b
     | _ => raise ToBoolExtractFailed
-
-fun val_to_ref (e : Val) =
-    case e of
-      Ref b => b
-    | _ => raise ToRefExtractFailed
-
-
-fun empty_store _ = ref [Num ~1]
-
-val the_store = (empty_store ())
-
-fun initialize_store _ = (the_store := [Num ~1])
-
-
-fun newref (v : Val) = let
-                           val nr = List.length (!the_store)
-                       in
-                           the_store := (!the_store) @ [v];
-                           Ref nr
-                       end
-
-fun deref r = List.nth ((!the_store),r)
-
-exception InvalidReference
-
-fun setref r (v : Val) = (the_store := List.update (!the_store,r,v))
-                         handle Subscript => raise InvalidReference
 
 
 fun apply_proc (p : Val -> Val) (v : Val) = (p v)
@@ -134,7 +103,6 @@ and val_to_string v = case v of
                  | Nil         => "()"
                  | Cell a  => "(" ^ (cell_to_string (Cell a)) ^ ")"
                  | Procedure (name, _, _) => "#<procedure " ^ name ^">"
-                 | Ref a => "#<reference " ^ Int.toString a ^ ">"
                  | _           => "#<value>"
 
 val save_env = ref EmptyEnv
@@ -268,25 +236,7 @@ fun eval (e : Expr) (p : Env) =
       eval lrbody (ExtendEnvRec (pnames, bvars, pbodies, p))
 
     | Proc (var, body) => Procedure (var, body, p)
-    | Newref exp1  =>  let
-                          val v1 = eval exp1 p
-                       in
-                          newref v1
-                       end
-    | Deref exp1  =>  let
-                          val v1 = eval exp1 p
-                          val ref1 = val_to_ref v1
-                       in
-                          deref ref1
-                      end
-    | Setref (exp1, exp2)  =>
-                      let
-                          val ref1 = val_to_ref (eval exp1 p)
-                          val val2 = eval exp2 p
-                      in
-                          setref ref1 val2;
-                          Num 23
-                      end
+
 
     | Call (rator, rand) =>
                       let
@@ -528,8 +478,6 @@ and ParseZerop  _ = make_op "zero?" Zerop
 and ParseNullp  _ = make_op "null?" Nullp
 and ParseCar    _ = make_op "car" Car
 and ParseCdr    _ = make_op "cdr" Cdr
-and ParseNewref _ = make_op "newref" Newref
-and ParseDeref  _ = make_op "deref" Deref
 
 and ParseSub        _ = make_binop "-" Sub
 and ParseMult       _ = make_binop "*" Mult
@@ -540,7 +488,6 @@ and ParseGreaterp   _ = make_binop ">" Greaterp
 and ParseLessp      _ = make_binop "<" Lessp
 and ParseCons       _ = make_binop "cons" Cons
 and ParseConsStream _ = make_binop "cons_stream" (fn (a,b) => Cons (a, Proc ("_",b)))
-and ParseSetref     _ = make_binop "setref" Setref
 
 and ParseId _ =
   (>>= (token (many (sat isAlphaNum)))
@@ -669,9 +616,6 @@ and ParseExpr _ = (ParseIf ())
               +++ (ParseDiv ())
               +++ (ParseLet ())
               +++ (ParseLetrec ())
-              +++ (ParseSetref ())
-              +++ (ParseDeref ())
-              +++ (ParseNewref ())
               +++ (ParseProc ())
               +++ (ParseCall ())
               +++ (ParseVar ())
@@ -686,7 +630,7 @@ val read = (show o try_read)
 
 fun evalo e = eval e EmptyEnv
 
-val run = let in (initialize_store ()); (evalo o read) end
+val run = (evalo o read)
 
 fun readfile(filename) =
     let val file = TextIO.openIn filename
