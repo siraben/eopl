@@ -72,7 +72,6 @@ fun lookup (var : Var) (env : Env) =
           |  NONE => lookup var senv
 
 
-
 exception ToBoolExtractFailed
 exception ToNumExtractFailed
 exception ToProcExtractFailed
@@ -211,7 +210,7 @@ fun eval (e : Expr) (p : Env) =
 
       (* print("Evaluating\n" ^ (expr_to_string e) ^ "\n---\n"); *)
       (* print("Environment\n" ^ (env_to_string p) ^ "\n---\n"); *)
-      save_env := p;
+      (* save_env := p; *)
     let
       fun val_to_proc (e : Val) =
       case e of
@@ -533,15 +532,16 @@ and ParseCdr    _ = make_op "cdr" Cdr
 and ParseNewref _ = make_op "newref" Newref
 and ParseDeref  _ = make_op "deref" Deref
 
-and ParseSub      _ = make_binop "-" Sub
-and ParseMult     _ = make_binop "*" Mult
-and ParseAdd      _ = make_binop "+" Add
-and ParseDiv      _ = make_binop "/" Div
-and ParseEqualp   _ = make_binop "=" Equalp
-and ParseGreaterp _ = make_binop ">" Greaterp
-and ParseLessp    _ = make_binop "<" Lessp
-and ParseCons     _ = make_binop "cons" Cons
-and ParseSetref   _ = make_binop "setref" Setref
+and ParseSub        _ = make_binop "-" Sub
+and ParseMult       _ = make_binop "*" Mult
+and ParseAdd        _ = make_binop "+" Add
+and ParseDiv        _ = make_binop "/" Div
+and ParseEqualp     _ = make_binop "=" Equalp
+and ParseGreaterp   _ = make_binop ">" Greaterp
+and ParseLessp      _ = make_binop "<" Lessp
+and ParseCons       _ = make_binop "cons" Cons
+and ParseConsStream _ = make_binop "cons_stream" (fn (a,b) => Cons (a, Proc ("_",b)))
+and ParseSetref     _ = make_binop "setref" Setref
 
 and ParseId _ =
   (>>= (token (many (sat isAlphaNum)))
@@ -653,6 +653,7 @@ and ParseExpr _ = (ParseIf ())
               +++ (ParseBoolean ())
               +++ (>>= (ParseComment ()) (fn _ => (ParseExpr ())))
               +++ (ParseCons ())
+              +++ (ParseConsStream ())
               +++ (ParseList ())
               +++ (ParseBegin ())
               +++ (ParseCar ())
