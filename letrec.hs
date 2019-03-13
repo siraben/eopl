@@ -3,7 +3,6 @@
 
 import           Control.Monad           hiding ( MonadPlus(..) )
 import           Control.Monad.Except    hiding ( MonadPlus(..) )
-
 import           Data.Char
 
 newtype Parser a = Parser (String -> [(a, String)])
@@ -121,6 +120,9 @@ token p = do
 symb :: String -> Parser String
 symb = token . string
 
+upTo :: Char -> Parser String
+upTo c = many $ sat (/= c)
+
 apply :: Parser a -> String -> [(a, String)]
 apply p = parse $ do
   space
@@ -132,14 +134,14 @@ type Var = String
 -- |The expression type.
 data Expr = NumLiteral Integer
           | StrLiteral String
-          | BoolL Bool
+          | BoolLiteral Bool
           | Emptylist
           | BeginEnd
           | Mult Expr Expr
           | Add Expr Expr
           | Sub Expr Expr
           | Zerop Expr
-          | Div Expr
+          | Div Expr Expr
           | Nullp Expr
           | Cons Expr Expr
           | Begin Expr Expr
@@ -154,7 +156,6 @@ data Expr = NumLiteral Integer
           | Letrec [Var] [Var] [Expr] Expr
           | Proc Var Expr
           | Call Expr Expr
-          deriving Show
 
 -- |The environment type.
 data Env = EmptyEnv
@@ -169,10 +170,9 @@ data Val = Nil
          | Str String
          | Boolean Bool
          | Procedure Var Expr Env
-         deriving Show
 
 envLookup :: Var -> Env -> Result Val
-envLookup a EmptyEnv = throwError $ UnboundVariable a
+envLookup a EmptyEnv = raise $ UnboundVariable a
 envLookup v (ExtendEnv var val rest) =
   if var == v then return val else envLookup var rest
 
@@ -182,40 +182,127 @@ reifyProc (Procedure var body env) val = eval body $ ExtendEnv var val env
 appProc :: (Val -> Result Val) -> Result Val -> Result Val
 appProc = (=<<)
 
-type Result = ExceptT Exception Maybe
+data Exceptional e a =
+     Success a
+   | Failure e
+   deriving Show
 
-eval :: Expr -> Env -> Result Val
-eval expr env = case expr of
-  BoolL      b -> return $ Boolean b
-  NumLiteral a -> return $ Num a
-  VarLit     a -> envLookup a env
+instance Functor (Exceptional e) where
+  fmap f (Success a) = Success $ f a
+  fmap f (Failure e) = Failure e
 
-  If p c a     -> do
-    (Boolean b) <- eval p env
-    eval (if b then c else a) env
+instance Applicative (Exceptional e) where
+  pure = Success
+  Success f <*> Success b = Success $ f b
 
-  Let varName varBody letBody -> do
-    val <- eval varBody env
-    eval letBody $ ExtendEnv varName val env
-  Proc var   body -> return $ Procedure var body env
-  Call rator rand -> do
-    fun <- eval rator env
-    appProc (reifyProc fun) $ eval rand env
+instance Monad (Exceptional e) where
+  return = Success
+  Failure l >>= _ = Failure l
+  Success r >>= k = k r
 
-  _ -> throwError $ OtherError $ "Unable to evaluate " ++ show expr
+-- instance MonadFail (Exceptional e) where
+--   fail s = Failure $ show s
+
+raise :: e -> Exceptional e a
+raise = Failure
+
+catch :: Exceptional e a -> (e -> Exceptional e a) -> Exceptional e a
+catch (Failure l) h = h l
+catch (Success r) _ = Success r
 
 
-data Exception = TypeError
+data Exception = TypeError String Expr
                | UnboundVariable Var
                | Unimplemented Expr
                | OtherError String
 
 instance Show Exception where
-  show TypeError             = "Type error"
+  show (TypeError s e) =
+    "Type error, expected an expression of type "
+      ++ s
+      ++ " but got the expression "
+      ++ show e
   show (UnboundVariable v  ) = "Unbound variable: " ++ v
+  show (Unimplemented   e  ) = "No evaluation rule for " ++ show e
   show (OtherError      msg) = msg
 
-throwOtherError = throwError . OtherError
+type Result = Exceptional Exception
+
+eval :: Expr -> Env -> Result Val
+eval (BoolLiteral b) _   = return $ Boolean b
+eval (NumLiteral  a) _   = return $ Num a
+eval (VarLit      a) env = envLookup a env
+eval (If p c a     ) env = do
+  be <- eval p env
+  case be of
+    Boolean b -> eval (if b then c else a) env
+    _         -> raise $ TypeError "Boolean" p
+
+eval (Let varName varBody letBody) env = do
+  val <- eval varBody env
+  eval letBody $ ExtendEnv varName val env
+
+eval (Proc var   body) env = return $ Procedure var body env
+eval (Call rator rand) env = do
+  fun <- eval rator env
+  appProc (reifyProc fun) $ eval rand env
+
+eval (Add n1 m1) env = do
+  n' <- eval n1 env
+  m' <- eval m1 env
+  case n' of
+    Num n -> case m' of
+      Num m -> return $ Num $ n + m
+      _     -> raise $ TypeError "number" m1
+    _ -> raise $ TypeError "number" n1
+
+
+eval expr _ = raise $ Unimplemented expr
+
+showOp :: String -> Expr -> String
+showOp name arg = concat [name, "(", show arg, ")"]
+
+showBinop :: String -> Expr -> Expr -> String
+showBinop name a b = concat [name, "(", show a, ", ", show b, ")"]
+
+instance Show Val where
+  show (Boolean b)          = show b
+  show (Num     a)          = show a
+  show Nil                  = "()"
+  show (Procedure name _ _) = "#<procedure " ++ name ++ ">"
+  show _                    = "#<value>"
+
+instance Show Expr where
+  show (NumLiteral  n)     = show n
+  show (BoolLiteral b)     = show b
+  show Emptylist           = "emptylist"
+-- show (Cons a)
+  show (Proc     var expr) = "proc(" ++ show var ++ show expr
+  show (Sub      a   b   ) = showBinop "-" a b
+  show (Add      a   b   ) = showBinop "+" a b
+  show (Mult     a   b   ) = showBinop "*" a b
+  show (Div      a   b   ) = showBinop "/" a b
+  show (Greaterp a   b   ) = showBinop ">" a b
+  show (Lessp    a   b   ) = showBinop "<" a b
+  show (Equalp   a   b   ) = showBinop "=" a b
+  show (Zerop a          ) = showOp "zero?" a
+  show (Nullp a          ) = showOp "null?" a
+  show (Car   a          ) = showOp "car" a
+  show (Cdr   a          ) = showOp "cdr" a
+
+  show (Begin a b        ) = concat ["begin ", show a, "; ", show b, "end"]
+  show (Call  a b        ) = concat ["(", show a, " ", show b]
+
+  show (If a b c) = concat ["if ", show a, "then ", show b, "else ", show c]
+
+  show (Let v e1 e2      ) = concat ["let ", v, " = ", show e1, " in ", show e2]
+
+
+  show (VarLit a         ) = a
+
+  show e                   = "???"
+
+raiseOtherError = raise . OtherError
 
 nat :: Parser Integer
 nat = do
@@ -242,10 +329,10 @@ constLit k c = do
   return c
 
 trueExpr :: Parser Expr
-trueExpr = constLit (symb "true") (BoolL True)
+trueExpr = constLit (symb "true") (BoolLiteral True)
 
 falseExpr :: Parser Expr
-falseExpr = constLit (symb "false") (BoolL False)
+falseExpr = constLit (symb "false") (BoolLiteral False)
 
 boolExpr :: Parser Expr
 boolExpr = trueExpr <|> falseExpr
@@ -285,10 +372,17 @@ callExpr = do
   symb ")"
   return $ Call e1 e2
 
-builtins = [("+", Add)]
+builtins = [("+", Add), ("*", Mult), ("-", Sub), ("cons", Cons)]
 
 builtinExpr :: Parser Expr
 builtinExpr = foldr (\(s, op) rest -> binOp s op <|> rest) zero builtins
+
+commentExpr :: Parser Expr
+commentExpr = do
+  symb "["
+  upTo ']'
+  symb "]"
+  parseExpr
 
 parseExpr :: Parser Expr
 parseExpr =
@@ -299,29 +393,29 @@ parseExpr =
     <|> letExpr
     <|> procExpr
     <|> callExpr
+    <|> commentExpr
     <|> varExpr
-        -- <|> commentExpr
         -- <|> consExpr
         -- <|> consStreamExpr
 
 -- readExpr :: String -> Maybe Expr
 readExpr s = case parse parseExpr s of
-  x : _ -> Just x
-  _     -> Nothing
+  (res, "") : _ -> Just res
+  _             -> Nothing
 
 emptyEnv = EmptyEnv
 
 reval :: String -> Result Val
 reval s = case parse parseExpr s of
   (res, ""  ) : _ -> eval res emptyEnv
-  (_  , rest) : _ -> throwOtherError $ "Unexpected characters: " ++ rest
+  (_  , rest) : _ -> raiseOtherError $ "Unexpected characters: " ++ rest
 
-reportResult (Just (Right val)) = putStrLn ("Result: " ++ show val)
-reportResult (Just (Left  e  )) = putStrLn ("Error: " ++ show e)
+reportResult (Success a) = print a
+reportResult (Failure e) = putStrLn $ "Error: " ++ show e
 
 main :: IO ()
 main = forever $ do
   putStr "> "
   exp <- getLine
-  reportResult $ runExceptT $ reval exp
+  reportResult $ reval exp
 
