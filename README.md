@@ -1,25 +1,45 @@
-# Standard ML Implementations of the languages from EOPL
-_Note: The language might be changed to Haskell in the future._
+# Haskell Implementations of the languages from EOPL
+
+```haskell
+Welcome to the LETREC interpreter. Control-d to exit.
+LETREC> letrec fact(n) = if zero?(n) then 1 else *(n, (fact -(n,1))) in (fact 5)
+120
+```
 
 This project aims to implement the languages found in the textbook
 [Essentials of Programming
-Languages](https://mitpress.mit.edu/books/essentials-programming-languages).
+Languages](https://mitpress.mit.edu/books/essentials-programming-languages),
+in Haskell.
 
 ## Why?
-It's somewhat awkward to fit in a datatype language into Scheme, which
-lacks static typing and pattern matching.  Why not use Standard ML,
-which allows us to use the powerful Hindley-Milner type system to do
-the heavy lifting?
+The textbook implements the languages using Scheme, which is indeed a
+very powerful functional programming language.  What about a Haskell
+version?  This repository explores that, an intellectual exercise in
+implementing various languages, which will later include ideas such as
+such as mutable state, exceptions, then object orientation and a
+module system, as EOPL does.
 
 ## Implementation
-The parser is implemented with parser combinators.  Currently it's
-just a direct translation from my other Scheme parser combinator
-library, and will need to be reworked significantly.  I'm striving for
-an implementation of the languages in EOPL with the minimal amount of
-code required that still is readable and is close to heart to the
-source material.
+### Parser
+The parser is implemented with monadic parser combinators.  This is
+written from scratch in Haskell.  Expressions are represented as
+inductive data types.  Since Haskell is pure, exceptions are
+implemented with an `Exceptional` monad.
+
+### Interpreter
+The interpreter is very simple.  In its current form it is an
+environment-passing interpreter, taking an expression, environment and
+returning a `Result Val`, where `Result` is an alias for `Exceptional
+Exception`, where `Exceptional` is a type constructor of kind `* ->
+*`.  This allows us to still signal errors during evaluation.
 
 ## How to use
+### Haskell LETREC REPL
+Run `make` to build the Haskell REPL for the language `LETREC`.  The
+Standard ML reference implementations can be run with SML/NJ, by
+typing `use "letrec.sml"` into the SML prompt.
+
+### Standard ML Functions
 The most interesting function is probably `repf`, which accepts a
 filename, parses it into the AST, runs `eval` over it and then uses
 the pretty printer to display the result.  `runfile` reads the
@@ -86,6 +106,7 @@ in
 ```
 
 ## Usage example
+### Standard ML
 ```sml
 - parse_tree "factorial.prog";
 val it =

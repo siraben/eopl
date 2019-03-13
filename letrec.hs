@@ -1,9 +1,10 @@
 {-# LANGUAGE LambdaCase #-}
-{-# OPTIONS_GHC -fno-warn-unused-do-bind #-}
 
 import           Control.Monad           hiding ( MonadPlus(..) )
-import           Control.Monad.Except    hiding ( MonadPlus(..) )
 import           Data.Char
+import           Data.List
+import           System.IO
+import           System.Exit
 
 newtype Parser a = Parser (String -> [(a, String)])
 
@@ -11,7 +12,6 @@ item :: Parser Char
 item = Parser $ \case
   ""       -> []
   (c : cs) -> [(c, cs)]
-
 
 parse (Parser p) = p
 
@@ -175,9 +175,14 @@ data Val = Nil
 envLookup :: Var -> Env -> Result Val
 envLookup searchVar EmptyEnv = raise $ UnboundVariable searchVar
 envLookup searchVar (ExtendEnv currVar val rest) =
-  if searchVar == currVar
-  then return val
-  else envLookup searchVar rest
+  if searchVar == currVar then return val else envLookup searchVar rest
+
+envLookup searchVar env@(ExtendEnvRec pnames bvars pbodies rest) =
+  case elemIndex searchVar pnames of
+    Just n  -> return $ Procedure (bvars !! n) (pbodies !! n) env
+    Nothing -> envLookup searchVar rest
+
+
 
 reifyProc :: Val -> Val -> Result Val
 reifyProc (Procedure var body env) val = eval body $ ExtendEnv var val env
@@ -203,16 +208,12 @@ instance Monad (Exceptional e) where
   Failure l >>= _ = Failure l
   Success r >>= k = k r
 
--- instance MonadFail (Exceptional e) where
---   fail s = Failure $ show s
-
 raise :: e -> Exceptional e a
 raise = Failure
 
 catch :: Exceptional e a -> (e -> Exceptional e a) -> Exceptional e a
 catch (Failure l) h = h l
 catch (Success r) _ = Success r
-
 
 data Exception = TypeError String Expr
                | UnboundVariable Var
@@ -233,6 +234,30 @@ instance Show Exception where
 
 type Result = Exceptional Exception
 
+evalNumBinOp :: (Integer -> Integer -> Integer) ->
+                 Expr -> Expr -> Env -> Result Val
+evalNumBinOp f exp1 exp2 env = do
+  e1 <- eval exp1 env
+  e2 <- eval exp2 env
+  case e1 of
+    Num n -> case e2 of
+      Num m -> return $ Num $ f n m
+      _     -> raise $ TypeError "number" exp2
+    _ -> raise $ TypeError "number" exp1
+
+
+evalBoolBinOp :: (Integer -> Integer -> Bool) ->
+                 Expr -> Expr -> Env -> Result Val
+evalBoolBinOp f exp1 exp2 env = do
+  e1 <- eval exp1 env
+  e2 <- eval exp2 env
+  case e1 of
+    Num n -> case e2 of
+      Num m -> return $ Boolean $ f n m
+      _     -> raise $ TypeError "number" exp2
+    _ -> raise $ TypeError "number" exp1
+
+
 eval :: Expr -> Env -> Result Val
 eval (BoolLiteral b) _   = return $ Boolean b
 eval (NumLiteral  a) _   = return $ Num a
@@ -247,28 +272,31 @@ eval (Let varName varBody letBody) env = do
   val <- eval varBody env
   eval letBody $ ExtendEnv varName val env
 
+eval (Letrec pnames bvars pbodies body) env =
+  eval body $ ExtendEnvRec pnames bvars pbodies env
+
 eval (Proc var   body) env = return $ Procedure var body env
 eval (Call rator rand) env = do
   fun <- eval rator env
   appProc (reifyProc fun) $ eval rand env
 
-eval (Add n1 m1) env = do
-  n' <- eval n1 env
-  m' <- eval m1 env
-  case n' of
-    Num n -> case m' of
-      Num m -> return $ Num $ n + m
-      _     -> raise $ TypeError "number" m1
-    _ -> raise $ TypeError "number" n1
+eval (Add n1 m1) env = evalNumBinOp (+) n1 m1 env
+eval (Mult n1 m1) env = evalNumBinOp (*) n1 m1 env
+eval (Sub n1 m1) env = evalNumBinOp (-) n1 m1 env
+eval (Zerop e) env = do
+  v <- eval e env
+  case v of
+    Num n -> return $ Boolean $ n == 0
+    _ -> raise $ TypeError "number" e
 
 eval Break env = raise $ OtherError $ show env
-eval expr _ = raise $ Unimplemented expr
+eval expr  _   = raise $ Unimplemented expr
 
 showOp :: String -> Expr -> String
 showOp name arg = concat [name, "(", show arg, ")"]
 
-showBinop :: String -> Expr -> Expr -> String
-showBinop name a b = concat [name, "(", show a, ", ", show b, ")"]
+showBinOp :: String -> Expr -> Expr -> String
+showBinOp name a b = concat [name, "(", show a, ", ", show b, ")"]
 
 instance Show Val where
   show (Boolean b)          = show b
@@ -281,23 +309,20 @@ instance Show Expr where
   show (NumLiteral  n)     = show n
   show (BoolLiteral b)     = show b
   show Emptylist           = "emptylist"
--- show (Cons a)
   show (Proc     var expr) = "proc(" ++ show var ++ show expr
-  show (Sub      a   b   ) = showBinop "-" a b
-  show (Add      a   b   ) = showBinop "+" a b
-  show (Mult     a   b   ) = showBinop "*" a b
-  show (Div      a   b   ) = showBinop "/" a b
-  show (Greaterp a   b   ) = showBinop ">" a b
-  show (Lessp    a   b   ) = showBinop "<" a b
-  show (Equalp   a   b   ) = showBinop "=" a b
-  show (Zerop a          ) = showOp "zero?" a
-  show (Nullp a          ) = showOp "null?" a
-  show (Car   a          ) = showOp "car" a
-  show (Cdr   a          ) = showOp "cdr" a
-
-  show (Begin a b        ) = concat ["begin ", show a, "; ", show b, "end"]
-  show (Call  a b        ) = concat ["(", show a, " ", show b]
-
+  show (Sub      a   b   ) = showBinOp "-" a b
+  show (Add      a   b   ) = showBinOp "+" a b
+  show (Mult     a   b   ) = showBinOp "*" a b
+  show (Div      a   b   ) = showBinOp "/" a b
+  show (Greaterp a   b   ) = showBinOp ">" a b
+  show (Lessp    a   b   ) = showBinOp "<" a b
+  show (Equalp   a   b   ) = showBinOp "=" a b
+  show (Zerop    a       ) = showOp "zero?" a
+  show (Nullp    a       ) = showOp "null?" a
+  show (Car      a       ) = showOp "car" a
+  show (Cdr      a       ) = showOp "cdr" a
+  show (Begin    a   b   ) = concat ["begin ", show a, "; ", show b, "end"]
+  show (Call     a   b   ) = concat ["(", show a, " ", show b]
   show (If a b c) = concat ["if ", show a, "then ", show b, "else ", show c]
 
   show (Let v e1 e2      ) = concat ["let ", v, " = ", show e1, " in ", show e2]
@@ -317,8 +342,8 @@ nat = do
 natural :: Parser Integer
 natural = token nat
 
-binOp :: String -> (Expr -> Expr -> Expr) -> Parser Expr
-binOp keyword op = do
+binOpExpr :: String -> (Expr -> Expr -> Expr) -> Parser Expr
+binOpExpr keyword op = do
   symb keyword
   symb "("
   e1 <- parseExpr
@@ -326,6 +351,16 @@ binOp keyword op = do
   e2 <- parseExpr
   symb ")"
   return $ op e1 e2
+
+
+opExpr :: String -> (Expr -> Expr) -> Parser Expr
+opExpr keyword op = do
+  symb keyword
+  symb "("
+  arg <- parseExpr
+  symb ")"
+  return $ op arg
+
 
 constExpr = NumLiteral <$> natural
 
@@ -361,6 +396,27 @@ letExpr = do
   symb "in"
   Let v e <$> parseExpr
 
+letrecClauseExpr = do
+  pname <- parseId
+  symb "("
+  bvar <- parseId
+  symb ")"
+  symb "="
+  pbody <- parseExpr
+  return (pname, bvar, pbody)
+
+letrecExpr = do
+  symb "letrec"
+  clauses <- many letrecClauseExpr
+  symb "in"
+  lrbody <- parseExpr
+  let names  = map (\(a, _, _) -> a) clauses
+      vars   = map (\(_, b, _) -> b) clauses
+      bodies = map (\(_, _, c) -> c) clauses
+
+  return $ Letrec names vars bodies lrbody
+
+
 procExpr = do
   symb "proc"
   symb "("
@@ -375,10 +431,15 @@ callExpr = do
   symb ")"
   return $ Call e1 e2
 
-builtins = [("+", Add), ("*", Mult), ("-", Sub), ("cons", Cons)]
+builtinBinOps = [("+", Add), ("*", Mult), ("-", Sub), ("cons", Cons), ("=", Equalp), (">", Greaterp), ("<", Lessp)]
 
-builtinExpr :: Parser Expr
-builtinExpr = foldr (\(s, op) rest -> binOp s op <|> rest) zero builtins
+builtinBinOpExpr :: Parser Expr
+builtinBinOpExpr = foldr (\(s, op) rest -> binOpExpr s op <|> rest) zero builtinBinOps
+
+builtinOps = [("zero?", Zerop), ("null?", Nullp), ("car", Car), ("cdr", Cdr)]
+
+builtinOpExpr :: Parser Expr
+builtinOpExpr = foldr (\(s, op) rest -> opExpr s op <|> rest) zero builtinOps
 
 commentExpr :: Parser Expr
 commentExpr = do
@@ -390,7 +451,8 @@ commentExpr = do
 parseExpr :: Parser Expr
 parseExpr =
   constExpr
-    <|> builtinExpr
+    <|> builtinBinOpExpr
+    <|> builtinOpExpr
     <|> ifExpr
     <|> boolExpr
     <|> letExpr
@@ -398,6 +460,7 @@ parseExpr =
     <|> callExpr
     <|> commentExpr
     <|> breakExpr
+    <|> letrecExpr
     <|> varExpr
         -- <|> consExpr
         -- <|> consStreamExpr
@@ -418,19 +481,19 @@ reval s = case parse parseExpr s of
 reportResult (Success a) = print a
 reportResult (Failure e) = putStrLn $ "Error: " ++ show e
 
-notEmpty [] = return ""
-notEmpty (l : xs) = do
-  s <- l
-  if s /= "" then return s
-    else notEmpty xs
+repl :: IO ()
+repl = do
+  putStr "LETREC> "
+  hFlush stdout
+  done <- isEOF
+  if done
+  then do { putStrLn "Exiting."; exitSuccess }
+  else do
+    exp <- getLine
+    if exp == "" then repl else reportResult $ reval exp
+    repl
 
-getLine' = notEmpty $ repeat getLine
 main :: IO ()
-main = do {
-  putStrLn "Welcome to the LETREC interpreter.";
-  forever $ do
-    putStr "LETREC => "
-    exp <- getLine'
-    reportResult $ reval exp
-}
-
+main = do
+  putStrLn "Welcome to the LETREC interpreter. Control-d to exit."
+  repl
