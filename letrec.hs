@@ -156,6 +156,7 @@ data Expr = NumLiteral Integer
           | Letrec [Var] [Var] [Expr] Expr
           | Proc Var Expr
           | Call Expr Expr
+          | Break
 
 -- |The environment type.
 data Env = EmptyEnv
@@ -172,9 +173,11 @@ data Val = Nil
          | Procedure Var Expr Env
 
 envLookup :: Var -> Env -> Result Val
-envLookup a EmptyEnv = raise $ UnboundVariable a
-envLookup v (ExtendEnv var val rest) =
-  if var == v then return val else envLookup var rest
+envLookup searchVar EmptyEnv = raise $ UnboundVariable searchVar
+envLookup searchVar (ExtendEnv currVar val rest) =
+  if searchVar == currVar
+  then return val
+  else envLookup searchVar rest
 
 reifyProc :: Val -> Val -> Result Val
 reifyProc (Procedure var body env) val = eval body $ ExtendEnv var val env
@@ -214,6 +217,7 @@ catch (Success r) _ = Success r
 data Exception = TypeError String Expr
                | UnboundVariable Var
                | Unimplemented Expr
+               | EmptyExpr
                | OtherError String
 
 instance Show Exception where
@@ -222,6 +226,7 @@ instance Show Exception where
       ++ s
       ++ " but got the expression "
       ++ show e
+  show EmptyExpr             = "Empty expression"
   show (UnboundVariable v  ) = "Unbound variable: " ++ v
   show (Unimplemented   e  ) = "No evaluation rule for " ++ show e
   show (OtherError      msg) = msg
@@ -256,7 +261,7 @@ eval (Add n1 m1) env = do
       _     -> raise $ TypeError "number" m1
     _ -> raise $ TypeError "number" n1
 
-
+eval Break env = raise $ OtherError $ show env
 eval expr _ = raise $ Unimplemented expr
 
 showOp :: String -> Expr -> String
@@ -328,16 +333,14 @@ constLit k c = do
   k
   return c
 
-trueExpr :: Parser Expr
 trueExpr = constLit (symb "true") (BoolLiteral True)
 
-falseExpr :: Parser Expr
 falseExpr = constLit (symb "false") (BoolLiteral False)
 
-boolExpr :: Parser Expr
+breakExpr = constLit (symb "break") Break
+
 boolExpr = trueExpr <|> falseExpr
 
-ifExpr :: Parser Expr
 ifExpr = do
   symb "if"
   pred <- parseExpr
@@ -346,7 +349,7 @@ ifExpr = do
   symb "else"
   If pred conseq <$> parseExpr
 
-parseId = token $ many $ sat isAlphaNum
+parseId = token $ many1 $ sat isAlphaNum
 
 varExpr = VarLit <$> parseId
 
@@ -394,11 +397,12 @@ parseExpr =
     <|> procExpr
     <|> callExpr
     <|> commentExpr
+    <|> breakExpr
     <|> varExpr
         -- <|> consExpr
         -- <|> consStreamExpr
 
--- readExpr :: String -> Maybe Expr
+readExpr :: String -> Maybe Expr
 readExpr s = case parse parseExpr s of
   (res, "") : _ -> Just res
   _             -> Nothing
@@ -409,13 +413,24 @@ reval :: String -> Result Val
 reval s = case parse parseExpr s of
   (res, ""  ) : _ -> eval res emptyEnv
   (_  , rest) : _ -> raiseOtherError $ "Unexpected characters: " ++ rest
+  []              -> raise EmptyExpr
 
 reportResult (Success a) = print a
 reportResult (Failure e) = putStrLn $ "Error: " ++ show e
 
+notEmpty [] = return ""
+notEmpty (l : xs) = do
+  s <- l
+  if s /= "" then return s
+    else notEmpty xs
+
+getLine' = notEmpty $ repeat getLine
 main :: IO ()
-main = forever $ do
-  putStr "> "
-  exp <- getLine
-  reportResult $ reval exp
+main = do {
+  putStrLn "Welcome to the LETREC interpreter.";
+  forever $ do
+    putStr "LETREC => "
+    exp <- getLine'
+    reportResult $ reval exp
+}
 
