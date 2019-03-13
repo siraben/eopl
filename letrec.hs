@@ -1,35 +1,35 @@
 {-# LANGUAGE LambdaCase #-}
 {-# OPTIONS_GHC -fno-warn-unused-do-bind #-}
 
-import Control.Monad hiding (MonadPlus(..))
-import Control.Monad.Except hiding (MonadPlus(..))
+import           Control.Monad           hiding ( MonadPlus(..) )
+import           Control.Monad.Except    hiding ( MonadPlus(..) )
 
-import Data.Char
+import           Data.Char
 
 newtype Parser a = Parser (String -> [(a, String)])
 
 item :: Parser Char
 item = Parser $ \case
-                   "" -> []
-                   (c:cs) -> [(c, cs)]
+  ""       -> []
+  (c : cs) -> [(c, cs)]
 
 
 parse (Parser p) = p
 
 instance Functor Parser where
-  fmap f (Parser cs) = Parser (\s -> [(f a, b) | (a, b) <- cs s])
+  fmap f (Parser cs) = Parser (\s -> [ (f a, b) | (a, b) <- cs s ])
 
 instance Applicative Parser where
   pure = return
-  (Parser cs1) <*> (Parser cs2) = Parser (\s -> [(f a, s2) | (f, s1) <- cs1 s, (a, s2) <- cs2 s1])
+  (Parser cs1) <*> (Parser cs2) =
+    Parser (\s -> [ (f a, s2) | (f, s1) <- cs1 s, (a, s2) <- cs2 s1 ])
 
 class Monad m => MonadZero m where
   zero :: m a
 
 instance Monad Parser where
   return a = Parser $ \cs -> [(a, cs)]
-  p >>= f = Parser $ \cs -> concat [parse (f a) cs' |
-                                  (a,cs') <- parse p cs]
+  p >>= f = Parser $ \cs -> concat [ parse (f a) cs' | (a, cs') <- parse p cs ]
 
 class MonadZero m => MonadPlus m where
   (<|>) :: m a -> m a -> m a
@@ -41,18 +41,22 @@ instance MonadPlus Parser where
   p <|> q = Parser (\cs -> parse p cs ++ parse q cs)
 
 (+++) :: Parser a -> Parser a -> Parser a
-p +++ q = Parser (\cs -> case parse (p <|> q) cs of
-                     []     -> []
-                     (x:xs) -> [x])
-          
+p +++ q = Parser
+  (\cs -> case parse (p <|> q) cs of
+    []       -> []
+    (x : xs) -> [x]
+  )
+
 sat :: (Char -> Bool) -> Parser Char
-sat p = do {c <- item;  if p c then return c else zero}
-  
+sat p = do
+  c <- item
+  if p c then return c else zero
+
 char :: Char -> Parser Char
 char c = sat (c ==)
 
 string :: String -> Parser String
-string "" = return ""
+string ""       = return ""
 string (c : cs) = do
   char c
   string cs
@@ -63,7 +67,7 @@ many p = many1 p +++ return []
 
 many1 :: Parser a -> Parser [a]
 many1 p = do
-  a <- p
+  a  <- p
   as <- many p
   return (a : as)
 
@@ -72,8 +76,10 @@ p `sepby` sep = (p `sepby1` sep) +++ return []
 
 sepby1 :: Parser a -> Parser b -> Parser [a]
 p `sepby1` sep = do
-  a <- p
-  as <- many $ do { sep; p }
+  a  <- p
+  as <- many $ do
+    sep
+    p
   return (a : as)
 
 chainl :: Parser a -> Parser (a -> a -> a) -> a -> Parser a
@@ -81,15 +87,17 @@ chainl p op a = (p `chainl1` op) +++ return a
 
 
 chainl1 :: Parser a -> Parser (a -> a -> a) -> Parser a
-p `chainl1` op = do {
-  a <- p;
+p `chainl1` op = do
+  a <- p
   rest a
-}
-  where rest a = (do 
-          f <- op
-          b <- p
-          rest (f a b))
-          +++ return a
+ where
+  rest a =
+    (do
+        f <- op
+        b <- p
+        rest (f a b)
+      )
+      +++ return a
 
 digit :: Parser Char
 digit = sat isDigit
@@ -114,7 +122,9 @@ symb :: String -> Parser String
 symb = token . string
 
 apply :: Parser a -> String -> [(a, String)]
-apply p = parse $ do {space; p}
+apply p = parse $ do
+  space
+  p
 
 -- |The type of variables.
 type Var = String
@@ -162,44 +172,50 @@ data Val = Nil
          deriving Show
 
 envLookup :: Var -> Env -> Result Val
-envLookup a EmptyEnv = throwError $ "Unbound variable: " ++ show a
-envLookup v (ExtendEnv var val rest) = if var == v then return val else envLookup var rest
+envLookup a EmptyEnv = throwError $ UnboundVariable a
+envLookup v (ExtendEnv var val rest) =
+  if var == v then return val else envLookup var rest
 
-type Exception = String
-
--- reifyProc :: Val -> (Val -> Maybe Val)
-reifyProc (Procedure var body env) val = runExceptT $ eval body $ ExtendEnv var val env
+reifyProc :: Val -> Val -> Result Val
+reifyProc (Procedure var body env) val = eval body $ ExtendEnv var val env
 
 appProc :: (Val -> Result Val) -> Result Val -> Result Val
 appProc = (=<<)
-  
-newtype Eval a = Eval (Env -> Maybe a)
 
-type Result = ExceptT String Maybe
+type Result = ExceptT Exception Maybe
 
 eval :: Expr -> Env -> Result Val
 eval expr env = case expr of
-  BoolL b -> return $ Boolean b
-  NumLiteral  a -> return $ Num a
-  VarLit a  -> envLookup a env
-    
-  If p c a -> do
-    x <- eval p env
-    case x of
-      Boolean True -> eval c env
-      Boolean False -> eval a env
+  BoolL      b -> return $ Boolean b
+  NumLiteral a -> return $ Num a
+  VarLit     a -> envLookup a env
+
+  If p c a     -> do
+    (Boolean b) <- eval p env
+    eval (if b then c else a) env
 
   Let varName varBody letBody -> do
     val <- eval varBody env
     eval letBody $ ExtendEnv varName val env
-  Proc var body -> return $ Procedure var body env
-  -- Call rator rand -> do
-  --   fun <- eval rator env
-  --   res <- appProc (reifyProc fun) (eval rand env)
-  --   return res
-                 
-  _ -> throwError "Unknown expression"
+  Proc var   body -> return $ Procedure var body env
+  Call rator rand -> do
+    fun <- eval rator env
+    appProc (reifyProc fun) $ eval rand env
 
+  _ -> throwError $ OtherError $ "Unable to evaluate " ++ show expr
+
+
+data Exception = TypeError
+               | UnboundVariable Var
+               | Unimplemented Expr
+               | OtherError String
+
+instance Show Exception where
+  show TypeError             = "Type error"
+  show (UnboundVariable v  ) = "Unbound variable: " ++ v
+  show (OtherError      msg) = msg
+
+throwOtherError = throwError . OtherError
 
 nat :: Parser Integer
 nat = do
@@ -275,14 +291,15 @@ builtinExpr :: Parser Expr
 builtinExpr = foldr (\(s, op) rest -> binOp s op <|> rest) zero builtins
 
 parseExpr :: Parser Expr
-parseExpr = constExpr
-        <|> builtinExpr
-        <|> ifExpr
-        <|> boolExpr
-        <|> letExpr
-        <|> procExpr
-        <|> callExpr
-        <|> varExpr
+parseExpr =
+  constExpr
+    <|> builtinExpr
+    <|> ifExpr
+    <|> boolExpr
+    <|> letExpr
+    <|> procExpr
+    <|> callExpr
+    <|> varExpr
         -- <|> commentExpr
         -- <|> consExpr
         -- <|> consStreamExpr
@@ -290,17 +307,17 @@ parseExpr = constExpr
 -- readExpr :: String -> Maybe Expr
 readExpr s = case parse parseExpr s of
   x : _ -> Just x
-  _ -> Nothing
-  
+  _     -> Nothing
+
 emptyEnv = EmptyEnv
 
 reval :: String -> Result Val
 reval s = case parse parseExpr s of
-            (res, "") : _ ->  eval res emptyEnv
-            (_, rest) : _ -> throwError $ "Unexpected characters: " ++ rest
-            
+  (res, ""  ) : _ -> eval res emptyEnv
+  (_  , rest) : _ -> throwOtherError $ "Unexpected characters: " ++ rest
+
 reportResult (Just (Right val)) = putStrLn ("Result: " ++ show val)
-reportResult (Just (Left e)) = putStrLn ("Error: " ++ e)
+reportResult (Just (Left  e  )) = putStrLn ("Error: " ++ show e)
 
 main :: IO ()
 main = forever $ do
