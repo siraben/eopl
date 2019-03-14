@@ -31,6 +31,13 @@ repl = do
     if exp == "" then repl else reportResult $ reval exp
     repl
 
+-- |Read, evaluate, print a file.
+repf :: String -> IO ()
+repf filename = do
+  x <- openFile filename ReadMode
+  y <- hGetContents x
+  reportResult $ reval y
+  
 main :: IO ()
 main = do
   putStrLn "Welcome to the LETREC interpreter. Control-d to exit."

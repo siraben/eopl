@@ -47,18 +47,64 @@ eval (Letrec pnames bvars pbodies body) env =
 eval (Proc var   body) env = return $ Procedure var body env
 eval (Call rator rand) env = do
   fun <- eval rator env
-  appProc (reifyProc fun) $ eval rand env
+  case fun of
+    Procedure _ _ _ -> appProc (reifyProc fun) $ eval rand env
+    _ -> raise $ TypeError "procedure" rator
 
-eval (Add n1 m1) env = evalNumBinOp (+) n1 m1 env
-eval (Mult n1 m1) env = evalNumBinOp (*) n1 m1 env
-eval (Sub n1 m1) env = evalNumBinOp (-) n1 m1 env
+eval (Add n m) env = evalNumBinOp (+) n m env
+eval (Mult n m) env = evalNumBinOp (*) n m env
+eval (Sub n m) env = evalNumBinOp (-) n m env
+eval (Lessp n m) env = evalBoolBinOp (<) n m env
+eval (Greaterp n m) env = evalBoolBinOp (>) n m env
+eval (Equalp n m) env = evalBoolBinOp (==) n m env
+
+eval (Div ne me) env = do
+  n <- eval ne env
+  m <- eval me env
+  case m of
+    Num 0 -> raiseOtherError $ "Divide by 0"
+    Num m -> case n of
+               Num n -> return $ Num $ div n m
+               _ -> raise $ TypeError "number" ne
+    _ -> raise $ TypeError "number" me
+
 eval (Zerop e) env = do
   v <- eval e env
   case v of
     Num n -> return $ Boolean $ n == 0
     _ -> raise $ TypeError "number" e
 
-eval Break env = raise $ OtherError $ show env
+eval Break env = raiseOtherError $ "Break received, environment: " ++ show env
+
+eval (Cons x y) env = do
+  x <- eval x env
+  y <- eval y env
+  return $ Cell x y
+
+eval (ConsStream x y) env = do
+  x <- eval x env
+  return $ Cell x $ Procedure "_" y env
+
+eval e@(Car c) env = do
+  c <- eval c env
+  case c of
+    Cell car cdr -> return car
+    _ -> raise $ TypeError "cell" e
+
+eval e@(Cdr c) env = do
+  c <- eval c env
+  case c of
+    Cell car cdr -> return cdr
+    _ -> raise $ TypeError "cell" e
+    
+eval Emptylist _ = return Nil
+eval (Nullp e) env = do
+  v <- eval e env
+  case v of
+    Nil -> return $ Boolean True
+    (Cell _ _) -> return $ Boolean False
+    _ -> raise $ TypeError "cell" e
+    
 eval expr  _   = raise $ Unimplemented expr
 
 
@@ -72,10 +118,9 @@ envLookup searchVar env@(ExtendEnvRec pnames bvars pbodies rest) =
     Just n  -> return $ Procedure (bvars !! n) (pbodies !! n) env
     Nothing -> envLookup searchVar rest
 
-
-
 reifyProc :: Val -> Val -> Result Val
 reifyProc (Procedure var body env) val = eval body $ ExtendEnv var val env
 
 appProc :: (Val -> Result Val) -> Result Val -> Result Val
 appProc = (=<<)
+

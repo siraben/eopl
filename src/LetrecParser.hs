@@ -73,9 +73,7 @@ p `sepby` sep = (p `sepby1` sep) +++ return []
 sepby1 :: Parser a -> Parser b -> Parser [a]
 p `sepby1` sep = do
   a  <- p
-  as <- many $ do
-    sep
-    p
+  as <- many $ do { sep; p }
   return (a : as)
 
 chainl :: Parser a -> Parser (a -> a -> a) -> a -> Parser a
@@ -134,7 +132,6 @@ nat = do
 natural :: Parser Integer
 natural = token nat
 
-
 binOpExpr :: String -> (Expr -> Expr -> Expr) -> Parser Expr
 binOpExpr keyword op = do
   symb keyword
@@ -155,19 +152,26 @@ opExpr keyword op = do
   return $ op arg
 
 
-constExpr = NumLiteral <$> natural
+negnat = do
+  string "-"
+  n <- natural
+  return $ - n
+
+constExpr = do
+  x <- natural <|> negnat
+  return $ NumLiteral x
+
+constExprs = [("true", BoolLiteral True),
+              ("false", BoolLiteral False),
+              ("emptylist", Emptylist),
+              ("break", Break)]
 
 constLit k c = do
   k
   return c
 
-trueExpr = constLit (symb "true") (BoolLiteral True)
-
-falseExpr = constLit (symb "false") (BoolLiteral False)
-
-breakExpr = constLit (symb "break") Break
-
-boolExpr = trueExpr <|> falseExpr
+builtinConstExpr :: Parser Expr
+builtinConstExpr = foldr (\(s, const) rest -> constLit (symb s) const <|> rest) zero constExprs
 
 ifExpr = do
   symb "if"
@@ -207,9 +211,11 @@ letrecClauseExpr = do
   pbody <- parseExpr
   return (pname, bvar, pbody)
 
+letrecCommentExpr = do { commentExpr; letrecClauseExpr }
+  
 letrecExpr = do
   symb "letrec"
-  clauses <- many letrecClauseExpr
+  clauses <- many $ letrecClauseExpr <|> letrecCommentExpr
   symb "in"
   lrbody <- parseExpr
   let names  = map (\(a, _, _) -> a) clauses
@@ -218,13 +224,36 @@ letrecExpr = do
 
   return $ Letrec names vars bodies lrbody
 
-
 procExpr = do
   symb "proc"
   symb "("
   v <- parseId
   symb ")"
   Proc v <$> parseExpr
+
+desugarMultiProc vars body = foldr Proc body vars
+procsExpr = do
+  symb "proc*"
+  symb "("
+  vars <- sepby parseId (symb ",")
+  symb ")"
+  body <- parseExpr
+  return $ desugarMultiProc vars body
+
+-- decomposeMultiCall :: [(Expr)] -> Expr -> Expr
+decomposeMultiCall op [] = error "Procedure has no arguments."
+decomposeMultiCall op [arg] = Call op arg
+decomposeMultiCall op (arg1 : rest) = decomposeMultiCall (Call op arg1) rest
+
+-- decomposeMultiCall2 args = foldl Call  args
+
+callsExpr = do
+  symb "("
+  e <- parseExpr
+  -- Force the list "es", containing the arguments, to be at least one.
+  es <- many1 parseExpr
+  symb ")"
+  return $ decomposeMultiCall e es
 
 callExpr = do
   symb "("
@@ -233,7 +262,7 @@ callExpr = do
   symb ")"
   return $ Call e1 e2
 
-builtinBinOps = [("+", Add), ("*", Mult), ("-", Sub), ("cons", Cons), ("=", Equalp), (">", Greaterp), ("<", Lessp)]
+builtinBinOps = [("+", Add), ("*", Mult), ("-", Sub), ("cons", Cons), ("=", Equalp), (">", Greaterp), ("<", Lessp), ("cons_stream", ConsStream), ("/", Div)]
 
 builtinBinOpExpr :: Parser Expr
 builtinBinOpExpr = foldr (\(s, op) rest -> binOpExpr s op <|> rest) zero builtinBinOps
@@ -243,29 +272,40 @@ builtinOps = [("zero?", Zerop), ("null?", Nullp), ("car", Car), ("cdr", Cdr)]
 builtinOpExpr :: Parser Expr
 builtinOpExpr = foldr (\(s, op) rest -> opExpr s op <|> rest) zero builtinOps
 
-commentExpr :: Parser Expr
+commentExpr :: Parser String
 commentExpr = do
   symb "["
   upTo ']'
   symb "]"
-  parseExpr
 
+toplevelCommentExpr = do { commentExpr; parseExpr }
+
+reifyExprList :: [Expr] -> Expr
+reifyExprList [] = Emptylist
+reifyExprList (x : xs) = Cons x $ reifyExprList xs
+listExpr = do
+  symb "list"
+  symb "("
+  xs <- sepby parseExpr (symb ",")
+  symb ")"
+  return $ reifyExprList xs
+  
 parseExpr :: Parser Expr
 parseExpr =
-  constExpr
+        constExpr
+    <|> builtinConstExpr
     <|> builtinBinOpExpr
     <|> builtinOpExpr
     <|> ifExpr
-    <|> boolExpr
     <|> letExpr
     <|> procExpr
+    <|> procsExpr
+    <|> listExpr
     <|> callExpr
-    <|> commentExpr
-    <|> breakExpr
+    <|> callsExpr
+    <|> toplevelCommentExpr
     <|> letrecExpr
     <|> varExpr
-        -- <|> consExpr
-        -- <|> consStreamExpr
 
 readExpr :: String -> Maybe Expr
 readExpr s = case parse parseExpr s of

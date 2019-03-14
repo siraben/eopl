@@ -16,6 +16,7 @@ data Expr = NumLiteral Integer
           | Div Expr Expr
           | Nullp Expr
           | Cons Expr Expr
+          | ConsStream Expr Expr
           | Begin Expr Expr
           | Car Expr
           | Cdr Expr
@@ -27,7 +28,9 @@ data Expr = NumLiteral Integer
           | Let Var Expr Expr
           | Letrec [Var] [Var] [Expr] Expr
           | Proc Var Expr
+          | Procs [Var] Expr
           | Call Expr Expr
+          | Calls Expr [Expr]
           | Break
 
 -- |The environment type.
@@ -79,11 +82,11 @@ data Exception = TypeError String Expr
 
 instance Show Exception where
   show (TypeError s e) =
-    "Type error, expected an expression of type "
+    "Type error, expected type "
       ++ s
-      ++ " but got the expression "
+      ++ " but got "
       ++ show e
-  show EmptyExpr             = "Empty expression"
+  show EmptyExpr             = "Unknown expression"
   show (UnboundVariable v  ) = "Unbound variable: " ++ v
   show (Unimplemented   e  ) = "No evaluation rule for " ++ show e
   show (OtherError      msg) = msg
@@ -97,21 +100,37 @@ showOp name arg = concat [name, "(", show arg, ")"]
 showBinOp :: String -> Expr -> Expr -> String
 showBinOp name a b = concat [name, "(", show a, ", ", show b, ")"]
 
+showCell :: Val -> String
+showCell Nil = ""
+showCell (Cell a b) = show a ++ case b of
+                                  rest@(Cell _ _) -> " " ++ showCell rest
+                                  Nil -> ""
+                                  val -> " . " ++ show val
+
 instance Show Val where
   show (Boolean b)          = show b
   show (Num     a)          = show a
-  show Nil                  = "()"
   show (Procedure name _ _) = "#<procedure " ++ name ++ ">"
+  show e@(Cell _ _) = "(" ++ showCell e ++ ")"
   show _                    = "#<value>"
 
 show_letrec_clauses [] [] [] = ""
 show_letrec_clauses (n : ns) (b : bs) (bo : bos) = concat [n, "(", b, " ) =", show bo, show_letrec_clauses ns bs bos]
 
+show_args [] = ""
+show_args [a] = show a
+show_args (a : as) = show a ++ " " ++ show_args as
+
+show_vars [] =  []
+show_vars [v] = v ++ ") "
+show_vars (v : vs) = v ++ ", " ++ show_vars vs
+
 instance Show Expr where
   show (NumLiteral  n)     = show n
   show (BoolLiteral b)     = show b
   show Emptylist           = "emptylist"
-  show (Proc     var expr) = "proc(" ++ show var ++ show expr
+  show (Proc     var expr) = "(proc(" ++ var ++ ") " ++ show expr ++ ")"
+  show (Procs   vars expr) = "proc*(" ++ show_vars vars ++ show expr
   show (Sub      a   b   ) = showBinOp "-" a b
   show (Add      a   b   ) = showBinOp "+" a b
   show (Mult     a   b   ) = showBinOp "*" a b
@@ -124,7 +143,10 @@ instance Show Expr where
   show (Car      a       ) = showOp "car" a
   show (Cdr      a       ) = showOp "cdr" a
   show (Begin    a   b   ) = concat ["begin ", show a, "; ", show b, "end"]
-  show (Call     a   b   ) = concat ["(", show a, " ", show b]
+  show (Call     a   b   ) = concat ["(", show a, " ", show b, ")"]
+  
+  show (Calls    a   b   ) = concat $ ["(", show a, " ", show_args b, ")"]
+  
   show (If a b c) = concat ["if ", show a, "then ", show b, "else ", show c]
 
   show (Let v e1 e2      ) = concat ["let ", v, " = ", show e1, " in ", show e2]
