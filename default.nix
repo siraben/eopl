@@ -1,5 +1,2 @@
-let
-  pkgs = import <nixpkgs> { };
-
-in
-pkgs.haskellPackages.callPackage ./project.nix { }
+with import <nixpkgs> { };
+haskellPackages.callPackage ./eopl.nix { }

@@ -1,3 +1,11 @@
+{-|
+Module      : LetrecTypes
+Description : The types of the terms and expressions of the LETREC language.
+
+EOPL uses a custom datatype-defining DSL powered by macros.  The
+Haskell implementation implements it directly as types, so that it can
+be enforced by the type checker.
+-}
 module LetrecTypes where
 
 -- |The type of variables.
@@ -66,9 +74,11 @@ instance Monad (Exceptional e) where
   Failure l >>= _ = Failure l
   Success r >>= k = k r
 
+-- |Raise an exception.
 raise :: e -> Exceptional e a
 raise = Failure
 
+-- |Catch an exception.
 catch :: Exceptional e a -> (e -> Exceptional e a) -> Exceptional e a
 catch (Failure l) h = h l
 catch (Success r) _ = Success r
@@ -91,38 +101,45 @@ instance Show Exception where
   show (Unimplemented   e  ) = "No evaluation rule for " ++ show e
   show (OtherError      msg) = msg
 
+-- |The type constructor for values that may return an exception.
 type Result = Exceptional Exception
 
--- |Print a unary operation.
+-- |Show a unary operation.  Used in the @Show@ instance for 'Expr'.
 showOp :: String -> Expr -> String
 showOp name arg = concat [name, "(", show arg, ")"]
 
+-- |Show binary operation, compare to @showOp@.  Used in the @Show@ instance for 'Expr'.
 showBinOp :: String -> Expr -> Expr -> String
 showBinOp name a b = concat [name, "(", show a, ", ", show b, ")"]
 
+-- |Show a cell.  Used in the @Show@ instance for 'Val'.
 showCell :: Val -> String
 showCell Nil = ""
 showCell (Cell a b) = show a ++ case b of
                                   rest@(Cell _ _) -> " " ++ showCell rest
-                                  Nil -> ""
-                                  val -> " . " ++ show val
+                                  Nil             -> ""
+                                  val             -> " . " ++ show val
 
 instance Show Val where
   show (Boolean b)          = show b
   show (Num     a)          = show a
   show (Procedure name _ _) = "#<procedure " ++ name ++ ">"
-  show e@(Cell _ _) = "(" ++ showCell e ++ ")"
+  show e@(Cell _ _)         = "(" ++ showCell e ++ ")"
   show _                    = "#<value>"
 
+-- |Show letrec clauses.  Used in the @Show@ instance for 'Expr'.
 show_letrec_clauses [] [] [] = ""
 show_letrec_clauses (n : ns) (b : bs) (bo : bos) = concat [n, "(", b, " ) =", show bo, show_letrec_clauses ns bs bos]
 
-show_args [] = ""
-show_args [a] = show a
+-- |Show a list of arguments (in multiple argument calls), space-separated.
+show_args []       = ""
+show_args [a]      = show a
 show_args (a : as) = show a ++ " " ++ show_args as
 
-show_vars [] =  []
-show_vars [v] = v ++ ") "
+-- |Show a list of bound variables (in multiple argument procedures),
+-- space-separated.
+show_vars []       =  []
+show_vars [v]      = v ++ ") "
 show_vars (v : vs) = v ++ ", " ++ show_vars vs
 
 instance Show Expr where
@@ -144,9 +161,9 @@ instance Show Expr where
   show (Cdr      a       ) = showOp "cdr" a
   show (Begin    a   b   ) = concat ["begin ", show a, "; ", show b, "end"]
   show (Call     a   b   ) = concat ["(", show a, " ", show b, ")"]
-  
+
   show (Calls    a   b   ) = concat $ ["(", show a, " ", show_args b, ")"]
-  
+
   show (If a b c) = concat ["if ", show a, "then ", show b, "else ", show c]
 
   show (Let v e1 e2      ) = concat ["let ", v, " = ", show e1, " in ", show e2]
@@ -155,5 +172,6 @@ instance Show Expr where
   show (VarLit a         ) = a
 
   show e                   = "???"
-
+  
+-- |Raise a generic error.  This is a wrapper for 'OtherError'.
 raiseOtherError = raise . OtherError
