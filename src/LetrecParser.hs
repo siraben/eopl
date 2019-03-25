@@ -193,7 +193,9 @@ constLit k c = do
 
 -- |Parse a built-in constant (as defined in 'constExprs').
 builtinConstExpr :: Parser Expr
-builtinConstExpr = foldr (\(s, const) rest -> constLit (symb s) const <|> rest) zero constExprs
+builtinConstExpr = foldr (\(s, const) rest -> constLit (symb s) const <|> rest)
+                         zero
+                         constExprs
 
 -- |Parse an @if@ expression, of the form:
 -- @if <expr> else <exr> then <expr>@.
@@ -286,7 +288,9 @@ callExpr = do
   symb ")"
   return $ Call e1 e2
 
-builtinBinOps = [("+", Add), ("*", Mult), ("-", Sub), ("cons", Cons), ("=", Equalp), (">", Greaterp), ("<", Lessp), ("cons_stream", ConsStream), ("/", Div)]
+builtinBinOps = [("+", Add), ("*", Mult), ("-", Sub),
+                 ("cons", Cons), ("=", Equalp), (">", Greaterp),
+                 ("<", Lessp), ("cons_stream", ConsStream), ("/", Div)]
 
 builtinBinOpExpr :: Parser Expr
 builtinBinOpExpr = foldr (\(s, op) rest -> binOpExpr s op <|> rest) zero builtinBinOps

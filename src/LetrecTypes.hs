@@ -129,7 +129,7 @@ instance Show Val where
 
 -- |Show letrec clauses.  Used in the @Show@ instance for 'Expr'.
 show_letrec_clauses [] [] [] = ""
-show_letrec_clauses (n : ns) (b : bs) (bo : bos) = concat [n, "(", b, " ) =", show bo, show_letrec_clauses ns bs bos]
+show_letrec_clauses (n : ns) (b : bs) (bo : bos) = concat [n, "(", b, ") = ", show bo, show_letrec_clauses ns bs bos]
 
 -- |Show a list of arguments (in multiple argument calls), space-separated.
 show_args []       = ""
@@ -164,11 +164,11 @@ instance Show Expr where
 
   show (Calls    a   b   ) = concat $ ["(", show a, " ", show_args b, ")"]
 
-  show (If a b c) = concat ["if ", show a, "then ", show b, "else ", show c]
+  show (If a b c) = concat ["if ", show a, " then ", show b, " else ", show c]
 
   show (Let v e1 e2      ) = concat ["let ", v, " = ", show e1, " in ", show e2]
 
-  show (Letrec names bvars bodies body) = concat ["letrec", show_letrec_clauses names bvars bodies, " in ", show body]
+  show (Letrec names bvars bodies body) = concat ["letrec ", show_letrec_clauses names bvars bodies, " in ", show body]
   show (VarLit a         ) = a
 
   show e                   = "???"
