@@ -1,5 +1,6 @@
 Control.Print.printDepth := 100;
 open Int
+open Option
 
 type Var = string
 
@@ -194,14 +195,16 @@ and expr_to_string v = case v of
                                     ^ " in " ^ (expr_to_string body)
                  | _           => "#<value>"
 
-fun env_to_string EmptyEnv = "EmptyEnv"
-  | env_to_string (ExtendEnv (va,vl,env)) = "ExtendEnv (var:" ^ va ^ " val:" ^
-                                        (val_to_string vl) ^ ") " ^ (env_to_string env)
-  | env_to_string (ExtendEnvRec (va,vl,exps,env)) = "ExtendEnvRec " ^
-                              "[" ^ (String.concatWith " " va) ^ "] [" ^
-                               (String.concatWith " " vl) ^ "] [" ^
-                               (String.concatWith " " (map expr_to_string exps)) ^ "] "  ^
-                               (env_to_string env)
+fun optionToList (SOME x) = [x]
+  | optionToList NONE = []
+(* fun env_to_string EmptyEnv = "EmptyEnv" *)
+(*   | env_to_string (ExtendEnv (va,vl,env)) = "ExtendEnv (var:" ^ va ^ " val:" ^ *)
+(*                                         (val_to_string vl) ^ ") " ^ (env_to_string env) *)
+(*   | env_to_string (ExtendEnvRec (va,vl,exps,env)) = "ExtendEnvRec " ^ *)
+(*                               "[" ^ (String.concatWith " " va) ^ "] [" ^ *)
+(*                                (String.concatWith " " vl) ^ "] [" ^ *)
+(*                                (String.concatWith " " (map expr_to_string exps)) ^ "] "  ^ *)
+(*                                (env_to_string env) *)
 exception NoMatchingBegin
 
 fun eval (e : Expr) (p : Env) =
@@ -317,147 +320,154 @@ val tailStr : string -> string =
 val cons_string : char -> string -> string =
     (fn c => fn s => (implode (cons c (explode s))))
 
-datatype 'a Parser = Parser of string -> (('a * string) list)
+datatype 'a Parser = Parser of string -> (('a * string) option)
 
 fun parse (Parser p) = p
 
+
+signature APPLICATIVE =
+sig
+  type 'a p
+  val pure : 'a -> 'a p
+  val <*> : ('a -> 'b) p * 'a p -> 'b p
+end
+
+signature FUNCTOR =
+sig
+  include APPLICATIVE
+  type 'a f = 'a p
+  val fmap : ('a -> 'b) -> 'a f -> 'b f
+  val <$> : ('a -> 'b) * 'a f -> 'b f
+end
 signature MONAD =
 sig
-    type 'a monad
-    val return : 'a -> 'a monad
-    val >>= : 'a monad -> ('a -> 'b monad) -> 'b monad
+  type 'a m
+  val return : 'a -> 'a m
+  val >>= : 'a m * ('a -> 'b m) -> 'b m
+  val >> : 'a m * 'b m -> 'b m
+  val << : 'a m * 'b m -> 'a m
+end
+
+
+infix 1 >>= >> <<
+infix 4 <$> <*>
+
+structure ParserA : APPLICATIVE =
+struct
+  type 'a p = 'a Parser
+  fun pure x = Parser (fn cs => SOME (x,cs))
+  fun (Parser cs1) <*> (Parser cs2) =
+    Parser (fn s => mapPartial (fn (f, s1) =>
+                    mapPartial (fn (a, s2) =>
+                    SOME (f a, s2) ) (cs2 s1) ) (cs1 s))
+end
+
+structure ParserF : FUNCTOR =
+struct
+  open ParserA
+  type 'a f = 'a Parser
+  fun fmap f (Parser p) = Parser (fn s => map (fn (a, s) => (f a, s)) (p s))
+  fun f <$> x = fmap f x
 end
 
 structure ParserM : MONAD =
 struct
-  type 'a monad = 'a Parser
-  val return = (fn a => (Parser (fn cs => [(a,cs)])))
-  val >>= =
-      (fn p =>
-          (fn f =>
-              (Parser
+  type 'a m = 'a Parser
+  fun return a = Parser (fn cs => SOME (a,cs))
+  fun p >>= f = Parser
                    (fn cs =>
-                       (List.concat
+                       (join
                             (map (fn (a,csp) =>
                                      (parse (f a) csp))
-                                 (parse p cs)))))))
+                                 (parse p cs))))
+  fun x >> y = x >>= (fn _ => y)
+  fun x << y = y >> x
 end
 
 open ParserM
+open ParserA
+open ParserF
+
 
 val item : char Parser =
     Parser (fn s =>
                case (explode s)
-                of [] => []
-                 | (c::cs) => [(c, (implode cs))])
+                of [] => NONE
+                 | (c::cs) => SOME (c, (implode cs)))
 
-val fail = Parser (fn s => [])
+val fail = Parser (fn s => NONE)
 
-infix ++
-fun p ++ q = Parser (fn cs => (parse p cs) @ (parse q cs))
+infix <+>
+fun p <+> q = Parser (fn cs =>
+                      case parse p cs of
+                         NONE => parse q cs
+                       | SOME r => SOME r)
 
-infix +++
-fun p +++ q = Parser (fn cs => case parse (p ++ q) cs
-                                of []  => []
-                                 | (x::xs) => [x])
+fun sat p = item >>= (fn c =>
+            (if p c then return c else fail))
 
-val sat : (char -> bool) -> char Parser =
- (fn p =>
-    (>>= item
-          (fn c =>
-              (if p c then return c else fail))))
+fun char c = sat (fn d => c = d)
 
-val char : char -> char Parser =
-    (fn c => sat (fn d => c = d))
+fun string s = case (explode s)
+                of [] => return ""
+                 | (c::cs) => char c              >>
+                              string (implode cs) >>
+                              return s
 
-val rec string : string -> string Parser =
- fn s => (case (explode s)
-           of [] => return ""
-            | (c::cs) => (>>= (char c)
-                               (fn _ =>
-                                   (>>= (string (implode cs))
-                                         (fn _ =>
-                                             return s)))))
+(* This infinite loops because we don't have lazy evaluation:
+   and many1n p = cons <$> p <*> (manyn p) *)
+fun manyn p = many1n p <+> return nil
 
-(*   string (c:cs) = do {char c; string cs; return (c:cs)}        *)
-
-fun manyn p = many1n p +++ return nil
 and many1n p =
-    (>>= p
-          (fn x =>
-              (>>= (manyn p)
-                    (fn xs =>
-                        (return (cons x xs))))))
+    p       >>= (fn x =>
+    manyn p >>= (fn xs =>
+    return (cons x xs)))
 
-fun many p = many1 p +++ return ""
+fun many p = many1 p <+> return ""
 and many1 p =
-    (>>= p
-          (fn x =>
-              (>>= (many p)
-                    (fn xs =>
-                        return (cons_string x xs)))))
+    p      >>= (fn x =>
+    many p >>= (fn xs =>
+    return (cons_string x xs)))
 
-
-
-(* sepby         :: Parser a -> Parser b -> Parser [a] *)
-fun sepbyn p sep  = (sepby1n p sep) +++ return nil
+fun sepbyn p sep  = (sepby1n p sep) <+> return nil
 and sepby1n p sep =
-    (>>= p
-          (fn x =>
-              (>>= (manyn (>>= sep
-                                 (fn _ => (>>= p (fn a => return a)))))
-                    (fn xs => (return (x::xs))))))
+     p                >>= (fn x  =>
+     manyn (sep >> p) >>= (fn xs =>
+     return (x::xs)))
 
-fun sepby p sep  = (sepby1 p sep) +++ return ""
+
+fun sepby p sep  = (sepby1 p sep) <+> return ""
 and sepby1 p sep =
-    (>>= p
-          (fn x =>
-              (>>= (many (>>= sep
-                                (fn _ => (>>= p (fn a => return a)))))
-                    (fn xs => (return (cons_string x xs))))))
+     p                >>= (fn x  =>
+     many (sep >> p)  >>= (fn xs =>
+     return (cons_string x xs)))
 
+val space : string Parser = many (sat isSpace)
 
-val space : string Parser = (many (sat isSpace))
+fun token p = p << space
 
-val token : 'a Parser -> 'a Parser =
-    (fn p =>
-        (>>= p
-              (fn a =>
-                  (>>= space
-                        (fn _ =>
-                            (return a))))))
+val symb = token o string
 
-val symb : string -> string Parser = (fn cs => (token (string cs)))
+fun apply p = parse (space >> p)
 
-val apply : 'a Parser -> string -> ('a * string) list =
-    (fn p => (parse (>>= space (fn _ => (>>= p (fn a => return a))))))
-
-val |> =
-    (fn m =>
-        (fn p =>
-            (>>= m
-                  (fn a =>
-                      (if (p a) then (return a) else fail)))))
-val digit =
-    (>>= (|> item isDigit)
-          (fn a => (return a)))
+val digit = sat isDigit
 
 val negnat =
-     (>>= ((char #"-") +++ (char #"~"))
-       (fn _ =>
-         (>>= (many1 digit)
-           (fn xs => (case (Int.fromString xs)
-                      of SOME x => (return (~x))
-                      |  NONE   => fail)))))
+     (char #"-" <+> char #"~") >>
+     many1 digit >>= (fn xs =>
+     case Int.fromString xs of
+         SOME x => return (~x)
+      |  NONE   => fail)
+
 val nat =
-  ((>>= (many1 digit)
-          (fn xs => (case (Int.fromString xs)
-                      of SOME x => (return x)
-                      |  NONE   => fail))) +++ negnat)
+  many1 digit >>= (fn xs =>
+  case Int.fromString xs of
+      SOME x => return x
+   |  NONE   => fail) <+> negnat
 
-val natural = (token nat)
+val natural = token nat
 
-fun up_to c = (>>= (many (sat (fn x => (not (x = c))))) (fn a => (return a)))
+fun up_to c = many (sat (fn x => (not (x = c))))
 
 fun is_cons (Cons _) = true
   | is_cons _        = false
@@ -471,57 +481,41 @@ fun to_cons_list [] = Emptylist
 fun to_begin_list []      = BeginEnd
   | to_begin_list (x::xs) = Begin (x,to_begin_list xs)
 
-fun parse_keyword_const keyword const = (>>= keyword (fn _ => (return const)))
+fun parse_keyword_const keyword const = keyword >> (return const)
 
 val try_read =
-let fun ParseConst _ = (>>= natural (fn n => return (Const n)))
+let fun ParseConst _ = Const <$> natural
 
 and ParseTrue _ = parse_keyword_const (symb "true") (ConstBool true)
 and ParseFalse _ = parse_keyword_const (symb "false") (ConstBool false)
-and ParseBoolean _ = ((ParseTrue ()) +++ (ParseFalse ()))
+and ParseBoolean _ = ParseTrue () <+> ParseFalse ()
 and ParseEmptyList _ = parse_keyword_const (symb "emptylist") Emptylist
 
 and ParseIf _ =
-    (>>= (symb "if")
-      (fn _ =>
-         (>>= (ParseExpr ())
-           (fn pred =>
-             (>>= (symb "then")
-               (fn _ =>
-                 (>>= (ParseExpr ())
-                   (fn conseq =>
-                     (>>= (symb "else")
-                       (fn _ =>
-                         (>>= (ParseExpr ())
-                           (fn alt =>
-                             (return (If (pred,conseq,alt)))))))))))))))
+    symb "if"    >>= (fn _      =>
+    ParseExpr () >>= (fn pred   =>
+    symb "then"  >>= (fn _      =>
+    ParseExpr () >>= (fn conseq =>
+    symb "else"  >>= (fn _      =>
+    ParseExpr () >>= (fn alt    =>
+    return (If (pred,conseq,alt))))))))
 
 
 and make_op keyword constructor =
-(>>= (symb keyword)
-       (fn _ =>
-         (>>= (symb "("))
-           (fn _ =>
-             (>>= (ParseExpr ())
-               (fn exp1 =>
-                 (>>= (symb ")")
-                   (fn _ =>
-                     (return (constructor exp1)))))))))
+ symb keyword >>= (fn _    =>
+ symb "("     >>= (fn _    =>
+ ParseExpr () >>= (fn exp1 =>
+ symb ")"     >>= (fn _    =>
+ return (constructor exp1)))))
 
 and make_binop keyword constructor =
-  (>>= (symb keyword)
-    (fn _ =>
-       (>>= (symb "("))
-       (fn _ =>
-         (>>= (ParseExpr ())
-            (fn exp1 =>
-               (>>= (symb ",")
-                  (fn _ =>
-                    (>>= (ParseExpr ())
-                    (fn exp2 =>
-                      (>>= (symb ")")
-                        (fn _ =>
-                          (return (constructor (exp1,exp2))))))))))))))
+  symb keyword >>= (fn _    =>
+  symb "("     >>= (fn _    =>
+  ParseExpr () >>= (fn exp1 =>
+  symb ","     >>= (fn _    =>
+  ParseExpr () >>= (fn exp2 =>
+  symb ")"     >>= (fn _    =>
+  return (constructor (exp1,exp2))))))))
 
 
 and ParseZerop  _ = make_op "zero?" Zerop
@@ -542,151 +536,110 @@ and ParseCons       _ = make_binop "cons" Cons
 and ParseConsStream _ = make_binop "cons_stream" (fn (a,b) => Cons (a, Proc ("_",b)))
 and ParseSetref     _ = make_binop "setref" Setref
 
-and ParseId _ =
-  (>>= (token (many (sat isAlphaNum)))
-     (fn v => (return v)))
+and ParseId _ = token (many (sat isAlphaNum))
 
-and ParseVar _ =
-  (>>= (ParseId ())
-     (fn v => (return (Var v))))
+and ParseVar _ = Var <$> ParseId ()
 
 and ParseLet _ =
-  (>>= (symb "let")
-   (fn _ =>
-  (>>= (ParseId ())
-    (fn v =>
-      (>>= (symb "=")
-         (fn _ =>
-           (>>= (ParseExpr ())
-             (fn e =>
-                (>>= (symb "in")
-                   (fn _ =>
-                     (>>= (ParseExpr ())
-                       (fn e2 =>
-                         (return (Let (v,e,e2)))))))))))))))
+  symb "let"   >>= (fn _ =>
+  ParseId ()   >>= (fn v =>
+  symb "="     >>= (fn _ =>
+  ParseExpr () >>= (fn e =>
+  symb "in"    >>= (fn _ =>
+  ParseExpr () >>= (fn e2 =>
+  return (Let (v,e,e2))))))))
 
 
 and ParseLetrecClause _ =
-  (>>= (ParseId ())
-    (fn pname =>
-      (>>= (symb "(")
-        (fn _ =>
-          (>>= (ParseId ())
-          (fn bvar =>
-            (>>= (symb ")")
-            (fn _ =>
-      (>>= (symb "=")
-         (fn _ =>
-           (>>= (ParseExpr ())
-             (fn pbody =>
-                (return (pname,bvar,pbody))))))))))))))
-and ParseLetrecComment _ =
-    (>>= (ParseComment ())
-         (fn _ => (ParseLetrecClause ())))
+  ParseId ()   >>= (fn pname =>
+  symb "("     >>= (fn _ =>
+  ParseId ()   >>= (fn bvar =>
+  symb ")"     >>= (fn _ =>
+  symb "="     >>= (fn _ =>
+  ParseExpr () >>= (fn pbody =>
+  return (pname,bvar,pbody)))))))
+
+and ParseLetrecComment _ = ParseComment () >> ParseLetrecClause ()
 and ParseLetrec _ =
-  (>>= (symb "letrec")
-   (fn _ =>
-   (>>= (manyn ((ParseLetrecClause ())  +++ (ParseLetrecComment ())))
+  symb "letrec" >>
+  (manyn (ParseLetrecClause ()  <+> ParseLetrecComment ())) >>=
            (fn clauses =>
-            (>>= (symb "in")
-                   (fn _ =>
-                     (>>= (ParseExpr ())
-                       (fn lrbody =>
+            symb "in" >>
+            (ParseExpr () >>= (fn lrbody =>
              let
-                 val names  = map #1 clauses
-                 val vars   = map #2 clauses
-                 val bodies = map #3 clauses
+                 val names  = List.map #1 clauses
+                 val vars   = List.map #2 clauses
+                 val bodies = List.map #3 clauses
              in
                  return (Letrec (names,vars,bodies,lrbody))
-             end))))))))
+             end)))
 
 
 and ParseProc _ =
-  (>>= (symb "proc")
-     (fn _ =>
-       (>>= (symb "(")
-         (fn _ =>
-           (>>= (ParseId ())
-             (fn v =>
-                (>>= (symb ")")
-                  (fn _ =>
-                    (>>= (ParseExpr ())
-                      (fn e =>
-                         (return (Proc (v, e)))))))))))))
+  symb "proc"  >>= (fn _ =>
+  symb "("     >>= (fn _ =>
+  ParseId ()   >>= (fn v =>
+  symb ")"     >>= (fn _ =>
+  ParseExpr () >>= (fn e =>
+  return (Proc (v, e)))))))
 
 and ParseCall _ =
-   (>>= (symb "(")
-      (fn _ =>
-        (>>= (ParseExpr ())
-           (fn e1 =>
-               (>>= (ParseExpr ())
-                 (fn e2 =>
-                   (>>= (symb ")")
-                    (fn _ => (return (Call (e1, e2)))))))))))
+  symb "("     >>= (fn _ =>
+  ParseExpr () >>= (fn e1 =>
+  ParseExpr () >>= (fn e2 =>
+  symb ")"     >>= (fn _ =>
+  return (Call (e1, e2))))))
 
 and ParseComment _ =
-   (>>= (symb "[")
-      (fn _ =>
-         (>>= (up_to #"]")
-              (fn _ => (symb "]")))))
+   symb "[" >> up_to #"]" >> symb "]"
 
 and ParseList _ =
-    (>>= (symb "list(")
-     (fn _ =>
-       (>>= (sepbyn (ParseExpr ()) (symb ","))
-              (fn ns =>
-                (>>= (symb ")")
-                  (fn _ => (return (to_cons_list ns))))))))
+    symb "list(" >>= (fn _ =>
+    sepbyn (ParseExpr ()) (symb ",") >>= (fn ns =>
+    symb ")" >> return (to_cons_list ns)))
 
 and ParseBegin _ =
-    (>>= (symb "begin")
-     (fn _ =>
-        (>>= (sepbyn (ParseExpr ()) (symb ";"))
-           (fn ns =>
-              (>>= (symb "end")
-                (fn _ => (return (to_begin_list ns))))))))
+    symb "begin" >>= (fn _ =>
+    sepbyn (ParseExpr ()) (symb ";") >>=  (fn ns =>
+    symb "end"  >> return (to_begin_list ns)))
 
 
-and ParseExpr _ = (ParseIf ())
-              +++ (ParseConst ())
-              +++ (ParseBoolean ())
-              +++ (>>= (ParseComment ()) (fn _ => (ParseExpr ())))
-              +++ (ParseCons ())
-              +++ (ParseConsStream ())
-              +++ (ParseList ())
-              +++ (ParseBegin ())
-              +++ (ParseCar ())
-              +++ (ParseCdr ())
-              +++ (ParseNullp ())
-              +++ (ParseEmptyList ())
-              +++ (ParseZerop ())
-              +++ (ParseGreaterp ())
-              +++ (ParseLessp ())
-              +++ (ParseEqualp ())
-              +++ (ParseSub ())
-              +++ (ParseMult ())
-              +++ (ParseAdd ())
-              +++ (ParseDiv ())
-              +++ (ParseLet ())
-              +++ (ParseLetrec ())
-              +++ (ParseSetref ())
-              +++ (ParseDeref ())
-              +++ (ParseNewref ())
-              +++ (ParseProc ())
-              +++ (ParseCall ())
-              +++ (ParseVar ())
+and ParseExpr _ = ParseIf ()
+              <+> ParseConst ()
+              <+> ParseBoolean ()
+              <+> (ParseComment () >>= (fn _ => ParseExpr ()))
+              <+> ParseCons ()
+              <+> ParseConsStream ()
+              <+> ParseList ()
+              <+> ParseBegin ()
+              <+> ParseCar ()
+              <+> ParseCdr ()
+              <+> ParseNullp ()
+              <+> ParseEmptyList ()
+              <+> ParseZerop ()
+              <+> ParseGreaterp ()
+              <+> ParseLessp ()
+              <+> ParseEqualp ()
+              <+> ParseSub ()
+              <+> ParseMult ()
+              <+> ParseAdd ()
+              <+> ParseDiv ()
+              <+> ParseLet ()
+              <+> ParseLetrec ()
+              <+> ParseSetref ()
+              <+> ParseDeref ()
+              <+> ParseNewref ()
+              <+> ParseProc ()
+              <+> ParseCall ()
+              <+> ParseVar ()
 in
-  (fn s => parse (ParseExpr ()) s)
+  parse (ParseExpr ())
 end
-
-
-fun show (x : (Expr * string) list) = #1 (car x)
-
-val read = (show o try_read)
 
 fun evalo e = eval e EmptyEnv
 
-val run = let in (initialize_store ()); (evalo o read) end
+fun run s = let in (initialize_store ()) ;
+          Option.map (evalo o #1) (try_read s) end
 
 fun readfile(filename) =
     let val file = TextIO.openIn filename
@@ -698,8 +651,10 @@ fun readfile(filename) =
 fun runfile(filename) = (run o readfile) filename
 
 
-(* Read evaluate print a file*)
+fun maybe_val_to_string (SOME x) = val_to_string x
+  | maybe_val_to_string NONE = "Failed"
+(* Read evaluate print a file *)
 fun repf(filename) = print ("Result of evaluation: " ^
-                            (val_to_string o run o readfile) filename ^ "\n")
+                            (maybe_val_to_string o run o readfile) filename ^ "\n")
 
-fun parse_tree filename = (read o readfile) filename
+fun parse_tree filename = (try_read o readfile) filename
