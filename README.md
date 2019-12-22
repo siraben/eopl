@@ -1,4 +1,4 @@
-# Haskell Implementations of the languages from EOPL
+# Haskell and SML Implementations of the languages from EOPL
 
 ```haskell
 Welcome to the LETREC interpreter. Control-d to exit.
@@ -35,9 +35,9 @@ Exception`, where `Exceptional` is a type constructor of kind `* ->
 
 ## How to use
 ### Haskell LETREC REPL
-Run `make` to build the Haskell REPL for the language `LETREC`.  The
-Standard ML reference implementations can be run with SML/NJ, by
-typing `use "letrec.sml"` into the SML prompt.
+Run `make` to build the Haskell REPL for the language `EXPLICIT-REFS`.
+The Standard ML reference implementations can be run with SML/NJ, by
+typing `use "ref.sml"` into the SML prompt.
 
 ### Standard ML Functions
 The most interesting function is probably `repf`, which accepts a

@@ -125,10 +125,7 @@ space = many $ sat isSpace
 
 -- |Lifts a parser into a whitespace-prefixed accepting one.
 token :: Parser a -> Parser a
-token p = do
-  a <- p
-  space
-  return a
+token p = p <* space
 
 -- |Parse a symbol, consuming leading whitespace.
 symb :: String -> Parser String
@@ -140,9 +137,7 @@ upTo c = many $ sat (/= c)
 
 -- |Parse a number.
 nat :: Parser Integer
-nat = do
-  xs <- many1 digit
-  return (read xs :: Integer)
+nat = read <$> many1 digit
 
 -- |Like 'nat' but consumes leading whitespace.
 natural :: Parser Integer
@@ -170,15 +165,10 @@ opExpr keyword op = do
   return $ op arg
 
 -- |Parse a negative number.
-negnat = do
-  string "-"
-  n <- natural
-  return $ - n
+negnat = string "-" *> (negate <$> natural)
 
 -- |Parse a LETREC number.
-numExpr = do
-  x <- natural <|> negnat
-  return $ NumLiteral x
+numExpr = NumLiteral <$> (natural <|> negnat)
 
 -- |The list of reserved LETREC constants.
 constExprs = [("true", BoolLiteral True),
@@ -187,9 +177,7 @@ constExprs = [("true", BoolLiteral True),
               ("break", Break)]
 
 -- |Apply a parser, then when it succeeds, return a constant.
-constLit k c = do
-  k
-  return c
+constLit k c = k *> return c
 
 -- |Parse a built-in constant (as defined in 'constExprs').
 builtinConstExpr :: Parser Expr
@@ -306,13 +294,10 @@ builtinOpExpr = foldr (\(s, op) rest -> opExpr s op <|> rest) zero builtinOps
 -- |Parse a comment, defined as a string starting with @[@, containing
 -- any number of intermediate characters, and ending with a @]@.
 commentExpr :: Parser String
-commentExpr = do
-  symb "["
-  upTo ']'
-  symb "]"
+commentExpr = symb "[" *> upTo ']' *> symb "]"
   
 -- |Parse a top-level comment, then parse an expression.
-toplevelCommentExpr = do { commentExpr; parseExpr }
+toplevelCommentExpr = commentExpr *> parseExpr
 
 reifyExprList :: [Expr] -> Expr
 reifyExprList []       = Emptylist
